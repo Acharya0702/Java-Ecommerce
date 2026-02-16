@@ -3,14 +3,15 @@ import { Navigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 
 const PrivateRoute = ({ children }) => {
-    const { token } = useSelector((state) => state.auth);
+    const { accessToken } = useSelector((state) => state.auth);
 
     // If not authenticated, redirect to login
-    if (!token) {
+    if (!accessToken) {
         return <Navigate to="/login" replace />;
     }
 
     // If authenticated, render the child component
+    console.log(accessToken);
     return children;
 };
 

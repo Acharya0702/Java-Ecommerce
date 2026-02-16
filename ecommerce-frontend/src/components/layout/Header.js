@@ -10,15 +10,15 @@ import { fetchCart } from '../../store/slices/cartSlice'; // Import fetchCart
 const Header = () => {
     const navigate = useNavigate();
     const dispatch = useDispatch();
-    const { user, token } = useSelector((state) => state.auth);
+    const { user, accessToken } = useSelector((state) => state.auth);
     const { totalItems } = useSelector((state) => state.cart);
 
     // Fetch cart when user logs in
     useEffect(() => {
-        if (token) {
+        if (accessToken) {
             dispatch(fetchCart());
         }
-    }, [token, dispatch]);
+    }, [accessToken, dispatch]);
 
     const handleLogout = () => {
         dispatch(clearCredentials());
@@ -66,7 +66,7 @@ const Header = () => {
                             </Nav.Link>
 
                             {/* User Menu */}
-                            {token ? (
+                            {accessToken ? (
                                 <NavDropdown
                                     title={
                                         <div className="d-inline-flex align-items-center">

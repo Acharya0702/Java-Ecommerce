@@ -1,0 +1,7 @@
+### Application Properties - Sensitive Data ###
+application-local.properties
+application-dev.properties
+application-secret.properties
+**/application*.properties
+!application.properties
+!application-example.properties

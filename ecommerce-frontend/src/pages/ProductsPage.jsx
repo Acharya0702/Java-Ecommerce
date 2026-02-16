@@ -40,7 +40,10 @@ const ProductsPage = () => {
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const { products, loading, error, totalPages } = useSelector((state) => state.products);
-    const { isAuthenticated } = useSelector((state) => state.auth);
+    const auth = useSelector((state) => state.auth);
+    const isAuthenticated = !!auth.accessToken;  // Convert to boolean
+    const user = auth.user;
+    const accessToken = auth.accessToken;
 
     // Local wishlist state
     const [wishlist, setWishlist] = useState([]);
@@ -55,6 +58,13 @@ const ProductsPage = () => {
     const [page, setPage] = useState(0); // Backend uses 0-based pagination
     const [showFilters, setShowFilters] = useState(false);
     const [priceRange, setPriceRange] = useState([0, 1000]);
+
+    console.log('Auth State:', {
+        isAuthenticated,
+        user,
+        accessToken: accessToken ? 'Present' : 'Missing',
+        localStorageToken: localStorage.getItem('accessToken') ? 'Present' : 'Missing'
+    });
 
     // Load wishlist from localStorage on mount
     useEffect(() => {

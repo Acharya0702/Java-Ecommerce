@@ -64,7 +64,7 @@ const authSlice = createSlice({
     name: 'auth',
     initialState: {
         user: getUserFromStorage(),
-        token: localStorage.getItem('accessToken'),
+        accessToken: localStorage.getItem('accessToken'),
         refreshToken: localStorage.getItem('refreshToken'),
         isLoading: false,
         error: null,
@@ -73,7 +73,7 @@ const authSlice = createSlice({
     reducers: {
         setCredentials: (state, action) => {
             const { accessToken, refreshToken, user } = action.payload;
-            state.token = accessToken;
+            state.accessToken = accessToken;
             state.refreshToken = refreshToken;
             state.user = user;
 
@@ -84,7 +84,7 @@ const authSlice = createSlice({
         },
         clearCredentials: (state) => {
             state.user = null;
-            state.token = null;
+            state.accessToken = null;
             state.refreshToken = null;
             state.error = null;
             state.verificationMessage = null;
@@ -111,13 +111,13 @@ const authSlice = createSlice({
             .addCase(login.fulfilled, (state, action) => {
                 state.isLoading = false;
                 state.user = action.payload.user;
-                state.token = action.payload.access_token;
-                state.refreshToken = action.payload.refresh_token;
+                state.accessToken = action.payload.accessToken;
+                state.refreshToken = action.payload.refreshToken;
                 state.error = null;
 
                 // Save to localStorage
-                localStorage.setItem('accessToken', action.payload.access_token);
-                localStorage.setItem('refreshToken', action.payload.refresh_token);
+                localStorage.setItem('accessToken', action.payload.accessToken);
+                localStorage.setItem('refreshToken', action.payload.refreshToken);
                 localStorage.setItem('user', JSON.stringify(action.payload.user));
             })
             .addCase(login.rejected, (state, action) => {
@@ -134,7 +134,7 @@ const authSlice = createSlice({
             .addCase(register.fulfilled, (state, action) => {
                 state.isLoading = false;
                 state.user = action.payload.user;
-                state.token = action.payload.accessToken;
+                state.accessToken = action.payload.accessToken;
                 state.refreshToken = action.payload.refreshToken;
                 state.verificationMessage = 'Registration successful! Please check your email for verification.';
                 state.error = null;
@@ -174,8 +174,8 @@ export const { setCredentials, clearCredentials, clearError, clearVerificationMe
 
 // Selectors
 export const selectCurrentUser = (state) => state.auth.user;
-export const selectCurrentToken = (state) => state.auth.token;
-export const selectIsAuthenticated = (state) => !!state.auth.token;
+export const selectCurrentToken = (state) => state.auth.accessToken;
+export const selectIsAuthenticated = (state) => !!state.auth.accessToken;
 export const selectAuthLoading = (state) => state.auth.isLoading;
 export const selectAuthError = (state) => state.auth.error;
 export const selectVerificationMessage = (state) => state.auth.verificationMessage;
