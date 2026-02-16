@@ -2,6 +2,7 @@ package com.ecommerce.ecommercebackend.service;
 
 import com.ecommerce.ecommercebackend.dto.AddressDTO;
 import com.ecommerce.ecommercebackend.dto.OrderDTO;
+import com.ecommerce.ecommercebackend.dto.OrderItemDTO;
 import com.ecommerce.ecommercebackend.dto.OrderRequestDTO;
 import com.ecommerce.ecommercebackend.entity.*;
 import com.ecommerce.ecommercebackend.exception.InsufficientStockException;
@@ -36,40 +37,111 @@ public class OrderService {
     private final EmailService emailService;
 
     private static final BigDecimal TAX_RATE = new BigDecimal("0.10"); // 10% tax
+    private static final BigDecimal SHIPPING_BASE_RATE = new BigDecimal("5.00");
+    private static final BigDecimal SHIPPING_PER_ITEM_RATE = new BigDecimal("0.50");
 
     @Transactional
     public OrderDTO createOrder(OrderRequestDTO request) {
         User currentUser = authService.getCurrentUser();
         log.info("=== STARTING ORDER CREATION for user: {} ===", currentUser.getId());
 
-        // Get cart - FIXED: Now properly returns Cart entity
-        Cart cart = cartRepository.findByUserIdWithItems(currentUser.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("Cart not found for user: " + currentUser.getId()));
+        try {
+            // Step 1: Get cart with items
+            log.debug("Step 1: Fetching cart for user: {}", currentUser.getId());
+            Cart cart = cartRepository.findByUserIdWithItems(currentUser.getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Cart not found for user: " + currentUser.getId()));
 
-        // Get cart items
-        List<CartItem> cartItems = new ArrayList<>(cart.getCartItems());
-        if (cartItems.isEmpty()) {
-            throw new IllegalStateException("Cannot create order with empty cart");
+            // Force initialization of cart items to avoid LazyInitializationException
+            Set<CartItem> cartItemsSet = cart.getCartItems();
+            List<CartItem> cartItems = new ArrayList<>(cartItemsSet);
+
+            if (cartItems.isEmpty()) {
+                throw new IllegalStateException("Cannot create order with empty cart");
+            }
+            log.info("Found {} items in cart", cartItems.size());
+
+            // Log cart items for debugging
+            for (CartItem item : cartItems) {
+                log.debug("Cart Item - Product: {}, Quantity: {}, Price: {}",
+                        item.getProduct().getName(), item.getQuantity(), item.getPrice());
+            }
+
+            // Step 2: Validate stock
+            log.debug("Step 2: Validating stock");
+            validateStock(cartItems);
+
+            // Step 3: Create order
+            log.debug("Step 3: Creating order object");
+            Order order = buildOrder(currentUser, request);
+
+            // Step 4: Calculate amounts
+            log.debug("Step 4: Calculating amounts");
+            BigDecimal subtotal = calculateSubtotal(cartItems);
+            BigDecimal taxAmount = calculateTax(subtotal);
+            BigDecimal shippingAmount = calculateShipping(cartItems);
+
+            order.setSubtotal(subtotal);
+            order.setTaxAmount(taxAmount);
+            order.setShippingAmount(shippingAmount);
+            order.setDiscountAmount(BigDecimal.ZERO);
+            order.setTotalAmount(subtotal.add(taxAmount).add(shippingAmount));
+
+            // Step 5: Save order
+            log.debug("Step 5: Saving order to database");
+            order = orderRepository.save(order);
+            log.info("Order saved with ID: {}, Number: {}", order.getId(), order.getOrderNumber());
+
+            // Step 6: Create order items and update stock
+            log.debug("Step 6: Creating order items");
+            List<OrderItem> orderItems = createOrderItems(order, cartItems);
+            orderItems = orderItemRepository.saveAll(orderItems);
+            log.debug("Created {} order items", orderItems.size());
+
+            // Step 7: Add items to order and recalculate
+            log.debug("Step 7: Adding items to order");
+            orderItems.forEach(order::addOrderItem);
+            order.calculateTotals();
+            order = orderRepository.save(order);
+
+            // Step 8: Clear cart
+            log.debug("Step 8: Clearing cart");
+            clearCart(cart);
+
+            log.info("Order created successfully: {}", order.getOrderNumber());
+
+            // Step 9: Create DTO
+            OrderDTO orderDTO = createCompleteOrderDTO(order, orderItems);
+
+            // Step 10: Send confirmation email (don't fail if email fails)
+            try {
+                emailService.sendOrderConfirmation(orderDTO);
+                log.info("Order confirmation email triggered for order: {}", order.getOrderNumber());
+            } catch (Exception e) {
+                log.error("Failed to send order confirmation email for order {}: {}",
+                        order.getOrderNumber(), e.getMessage());
+            }
+
+            return orderDTO;
+
+        } catch (Exception e) {
+            log.error("Order creation failed at step: {}", e.getMessage(), e);
+            throw e;
         }
+    }
 
-        log.info("Found {} items in cart", cartItems.size());
-
-        // Validate stock for all items before processing
-        validateStock(cartItems);
-
-        // Create order
+    private Order buildOrder(User user, OrderRequestDTO request) {
         Order order = new Order();
-        order.setUser(currentUser);
+        order.setUser(user);
         order.setOrderNumber(generateOrderNumber());
         order.setStatus(Order.OrderStatus.PENDING);
         order.setPaymentMethod(request.getPaymentMethod());
         order.setPaymentStatus(Order.PaymentStatus.PENDING);
         order.setNotes(request.getNotes());
 
-        // Set addresses
+        // Set shipping address
         order.setShippingAddress(createAddress(request.getShippingAddress()));
 
-        // Handle billing address
+        // Set billing address
         if (request.getUseShippingForBilling() != null && request.getUseShippingForBilling()) {
             order.setBillingAddress(createAddress(request.getShippingAddress()));
         } else if (request.getBillingAddress() != null) {
@@ -78,51 +150,7 @@ public class OrderService {
             order.setBillingAddress(createAddress(request.getShippingAddress()));
         }
 
-        // Calculate amounts
-        BigDecimal subtotal = calculateSubtotal(cartItems);
-        BigDecimal taxAmount = calculateTax(subtotal);
-        BigDecimal shippingAmount = calculateShipping(cartItems);
-
-        order.setSubtotal(subtotal);
-        order.setTaxAmount(taxAmount);
-        order.setShippingAmount(shippingAmount);
-        order.setDiscountAmount(BigDecimal.ZERO); // Initialize discount
-        order.setTotalAmount(subtotal.add(taxAmount).add(shippingAmount));
-
-        // Save order first to get ID
-        order = orderRepository.save(order);
-        log.info("Order saved with ID: {}, Number: {}", order.getId(), order.getOrderNumber());
-
-        // Create order items and update stock
-        List<OrderItem> orderItems = createOrderItems(order, cartItems);
-        orderItems = orderItemRepository.saveAll(orderItems);
-
-        // Add order items to order
-        orderItems.forEach(order::addOrderItem);
-
-        // Recalculate totals with all items
-        order.calculateTotals();
-        order = orderRepository.save(order);
-
-        // Clear the cart
-        clearCart(cart);
-
-        log.info("Order created successfully: {}", order.getOrderNumber());
-
-        // Create complete DTO
-        OrderDTO orderDTO = createCompleteOrderDTO(order, orderItems);
-
-        // Send order confirmation email asynchronously
-        try {
-            emailService.sendOrderConfirmation(orderDTO);
-            log.info("Order confirmation email triggered for order: {}", order.getOrderNumber());
-        } catch (Exception e) {
-            log.error("Failed to send order confirmation email for order {}: {}",
-                    order.getOrderNumber(), e.getMessage(), e);
-            // Don't fail the order if email fails
-        }
-
-        return orderDTO;
+        return order;
     }
 
     private void validateStock(List<CartItem> cartItems) {
@@ -149,18 +177,11 @@ public class OrderService {
     }
 
     private BigDecimal calculateShipping(List<CartItem> cartItems) {
-        // Simple shipping calculation - can be made more sophisticated
         int totalItems = cartItems.stream().mapToInt(CartItem::getQuantity).sum();
         if (totalItems == 0) return BigDecimal.ZERO;
 
-        // Base shipping rate
-        BigDecimal baseRate = new BigDecimal("5.00");
-
-        // Additional per item rate
-        BigDecimal perItemRate = new BigDecimal("0.50");
-        BigDecimal additionalCharge = perItemRate.multiply(BigDecimal.valueOf(totalItems - 1));
-
-        return baseRate.add(additionalCharge).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal additionalCharge = SHIPPING_PER_ITEM_RATE.multiply(BigDecimal.valueOf(Math.max(0, totalItems - 1)));
+        return SHIPPING_BASE_RATE.add(additionalCharge).setScale(2, RoundingMode.HALF_UP);
     }
 
     private List<OrderItem> createOrderItems(Order order, List<CartItem> cartItems) {
@@ -177,7 +198,7 @@ public class OrderService {
             orderItem.setProductName(product.getName());
             orderItem.setProductImageUrl(product.getImageUrl());
             orderItem.setProductSku(product.getSku());
-            orderItem.calculateSubtotal(); // This will set the subtotal
+            orderItem.calculateSubtotal();
 
             orderItems.add(orderItem);
 
@@ -193,7 +214,9 @@ public class OrderService {
     }
 
     private void clearCart(Cart cart) {
-        cart.clearCart(); // Using entity helper method
+        cart.getCartItems().clear();
+        cart.setTotalItems(0);
+        cart.setTotalAmount(BigDecimal.ZERO);
         cartRepository.save(cart);
         log.info("Cart cleared for user: {}", cart.getUser().getId());
     }
@@ -202,7 +225,6 @@ public class OrderService {
     public OrderDTO updateOrderStatus(Long orderId, Order.OrderStatus newStatus, String trackingNumber) {
         User currentUser = authService.getCurrentUser();
 
-        // Check if user is admin
         if (!isAdmin(currentUser)) {
             throw new UnauthorizedAccessException("Only administrators can update order status");
         }
@@ -212,7 +234,6 @@ public class OrderService {
 
         Order.OrderStatus oldStatus = order.getStatus();
 
-        // Update status based on the new status
         switch (newStatus) {
             case SHIPPED:
                 order.markAsShipped(trackingNumber, "Standard Shipping");
@@ -228,12 +249,10 @@ public class OrderService {
         }
 
         order = orderRepository.save(order);
-        log.info("Order {} status updated from {} to {}",
-                order.getOrderNumber(), oldStatus, newStatus);
+        log.info("Order {} status updated from {} to {}", order.getOrderNumber(), oldStatus, newStatus);
 
         OrderDTO orderDTO = getOrderById(orderId);
 
-        // Send email notifications
         try {
             if (newStatus == Order.OrderStatus.SHIPPED) {
                 emailService.sendOrderShippedEmail(orderDTO, trackingNumber);
@@ -243,8 +262,7 @@ public class OrderService {
                 log.info("Order delivered email sent for order: {}", order.getOrderNumber());
             }
         } catch (Exception e) {
-            log.error("Failed to send order status email for order {}: {}",
-                    order.getOrderNumber(), e.getMessage(), e);
+            log.error("Failed to send order status email for order {}: {}", order.getOrderNumber(), e.getMessage());
         }
 
         return orderDTO;
@@ -259,22 +277,24 @@ public class OrderService {
         log.info("Found {} orders for user {}", orders.size(), currentUser.getId());
 
         return orders.stream()
-                .map(order -> {
-                    OrderDTO dto = new OrderDTO();
-                    dto.setId(order.getId());
-                    dto.setOrderNumber(order.getOrderNumber());
-                    dto.setUserId(order.getUser().getId());
-                    dto.setUserName(order.getUser().getFullName());
-                    dto.setUserEmail(order.getUser().getEmail());
-                    dto.setTotalAmount(order.getTotalAmount());
-                    dto.setStatus(order.getStatus());
-                    dto.setPaymentMethod(order.getPaymentMethod());
-                    dto.setPaymentStatus(order.getPaymentStatus());
-                    dto.setCreatedAt(order.getCreatedAt());
-                    dto.setOrderItems(Collections.emptyList()); // Don't load items for list view
-                    return dto;
-                })
+                .map(this::convertToMinimalDTO)
                 .collect(Collectors.toList());
+    }
+
+    private OrderDTO convertToMinimalDTO(Order order) {
+        OrderDTO dto = new OrderDTO();
+        dto.setId(order.getId());
+        dto.setOrderNumber(order.getOrderNumber());
+        dto.setUserId(order.getUser().getId());
+        dto.setUserName(order.getUser().getFullName());
+        dto.setUserEmail(order.getUser().getEmail());
+        dto.setTotalAmount(order.getTotalAmount());
+        dto.setStatus(order.getStatus() != null ? order.getStatus().toString() : "PENDING");
+        dto.setPaymentMethod(order.getPaymentMethod() != null ? order.getPaymentMethod().toString() : null);
+        dto.setPaymentStatus(order.getPaymentStatus() != null ? order.getPaymentStatus().toString() : "PENDING");
+        dto.setCreatedAt(order.getCreatedAt());
+        dto.setOrderItems(Collections.emptyList());
+        return dto;
     }
 
     @Transactional(readOnly = true)
@@ -285,14 +305,11 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
 
-        // Check authorization
         if (!order.getUser().getId().equals(currentUser.getId()) && !isAdmin(currentUser)) {
             throw new UnauthorizedAccessException("You don't have permission to view this order");
         }
 
-        // Get order items with product details
         List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithProduct(orderId);
-
         return createCompleteOrderDTO(order, orderItems);
     }
 
@@ -304,13 +321,11 @@ public class OrderService {
         Order order = orderRepository.findByOrderNumber(orderNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with number: " + orderNumber));
 
-        // Check authorization
         if (!order.getUser().getId().equals(currentUser.getId()) && !isAdmin(currentUser)) {
             throw new UnauthorizedAccessException("You don't have permission to view this order");
         }
 
         List<OrderItem> orderItems = orderItemRepository.findByOrderIdWithProduct(order.getId());
-
         return createCompleteOrderDTO(order, orderItems);
     }
 
@@ -322,12 +337,10 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order not found with id: " + orderId));
 
-        // Check authorization
         if (!order.getUser().getId().equals(currentUser.getId()) && !isAdmin(currentUser)) {
             throw new UnauthorizedAccessException("You don't have permission to cancel this order");
         }
 
-        // Check if order can be cancelled
         if (!order.canBeCancelled()) {
             throw new OrderCancellationException(
                     String.format("Order %s cannot be cancelled at status: %s",
@@ -335,7 +348,6 @@ public class OrderService {
             );
         }
 
-        // Cancel order
         order.cancelOrder();
 
         // Restore product stock
@@ -345,8 +357,7 @@ public class OrderService {
             if (product != null) {
                 product.setStockQuantity(product.getStockQuantity() + orderItem.getQuantity());
                 productRepository.save(product);
-                log.debug("Restored stock for product: {}, quantity: {}",
-                        product.getName(), orderItem.getQuantity());
+                log.debug("Restored stock for product: {}, quantity: {}", product.getName(), orderItem.getQuantity());
             }
         }
 
@@ -368,9 +379,12 @@ public class OrderService {
         dto.setTaxAmount(order.getTaxAmount());
         dto.setShippingAmount(order.getShippingAmount());
         dto.setDiscountAmount(order.getDiscountAmount());
-        dto.setStatus(order.getStatus());
-        dto.setPaymentMethod(order.getPaymentMethod());
-        dto.setPaymentStatus(order.getPaymentStatus());
+
+        // Convert enums to strings to avoid serialization issues
+        dto.setStatus(order.getStatus() != null ? order.getStatus().toString() : "PENDING");
+        dto.setPaymentMethod(order.getPaymentMethod() != null ? order.getPaymentMethod().toString() : null);
+        dto.setPaymentStatus(order.getPaymentStatus() != null ? order.getPaymentStatus().toString() : "PENDING");
+
         dto.setTrackingNumber(order.getTrackingNumber());
         dto.setShippingMethod(order.getShippingMethod());
         dto.setNotes(order.getNotes());
@@ -390,23 +404,25 @@ public class OrderService {
 
         // Convert order items
         if (orderItems != null && !orderItems.isEmpty()) {
-            List<OrderDTO.OrderItemDTO> itemDTOs = orderItems.stream()
-                    .map(item -> {
-                        OrderDTO.OrderItemDTO itemDTO = new OrderDTO.OrderItemDTO();
-                        itemDTO.setId(item.getId());
-                        itemDTO.setProductName(item.getProductName());
-                        itemDTO.setProductImage(item.getProductImageUrl());
-                        itemDTO.setSku(item.getProductSku());
-                        itemDTO.setPrice(item.getPrice());
-                        itemDTO.setQuantity(item.getQuantity());
-                        itemDTO.setSubtotal(item.getSubtotal());
-                        return itemDTO;
-                    })
+            List<OrderItemDTO> itemDTOs = orderItems.stream()
+                    .map(this::convertToOrderItemDTO)
                     .collect(Collectors.toList());
             dto.setOrderItems(itemDTOs);
         }
 
         return dto;
+    }
+
+    private OrderItemDTO convertToOrderItemDTO(OrderItem item) {
+        OrderItemDTO itemDTO = new OrderItemDTO();
+        itemDTO.setId(item.getId());
+        itemDTO.setProductName(item.getProductName());
+        itemDTO.setProductImage(item.getProductImageUrl());
+        itemDTO.setSku(item.getProductSku());
+        itemDTO.setPrice(item.getPrice());
+        itemDTO.setQuantity(item.getQuantity());
+        itemDTO.setSubtotal(item.getSubtotal());
+        return itemDTO;
     }
 
     private String generateOrderNumber() {
@@ -447,8 +463,6 @@ public class OrderService {
     }
 
     private boolean isAdmin(User user) {
-        // Implement your admin check logic here
-        // This depends on how you store roles in your User entity
-        return user.getRole() != null && "ADMIN".equals(user.getRole().name());
+        return user.getRole() != null && User.Role.ADMIN.equals(user.getRole());
     }
 }

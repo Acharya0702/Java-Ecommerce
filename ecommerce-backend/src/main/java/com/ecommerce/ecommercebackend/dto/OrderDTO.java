@@ -1,3 +1,4 @@
+// src/main/java/com/ecommerce/ecommercebackend/dto/OrderDTO.java
 package com.ecommerce.ecommercebackend.dto;
 
 import com.ecommerce.ecommercebackend.entity.Order;
@@ -22,13 +23,12 @@ public class OrderDTO {
     private BigDecimal shippingAmount;
     private BigDecimal discountAmount;
 
-    // Use top-level AddressDTO instead of inner class
     private AddressDTO shippingAddress;
     private AddressDTO billingAddress;
 
-    private Order.OrderStatus status;
-    private Order.PaymentMethod paymentMethod;
-    private Order.PaymentStatus paymentStatus;
+    private String status;  // Changed from Order.OrderStatus to String
+    private String paymentMethod;  // Changed from Order.PaymentMethod to String
+    private String paymentStatus;  // Changed from Order.PaymentStatus to String
     private String trackingNumber;
     private String shippingMethod;
     private String notes;
@@ -36,15 +36,4 @@ public class OrderDTO {
     private LocalDateTime updatedAt;
     private LocalDateTime shippedAt;
     private LocalDateTime deliveredAt;
-
-    @Data
-    public static class OrderItemDTO {
-        private Long id;
-        private String productName;
-        private String productImage;
-        private String sku;
-        private BigDecimal price;
-        private Integer quantity;
-        private BigDecimal subtotal;
-    }
 }

@@ -41,7 +41,7 @@ const Header = () => {
                 <Container>
                     <Navbar.Brand as={Link} to="/" className="d-flex align-items-center">
                         <FaStore className="me-2" size={28} />
-                        <span className="fw-bold fs-4">ShopEase</span>
+                        <span className="fw-bold fs-4">ManguliShop</span>
                     </Navbar.Brand>
 
                     <Navbar.Toggle aria-controls="basic-navbar-nav" />

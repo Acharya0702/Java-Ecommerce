@@ -15,6 +15,8 @@ import HomePage from './pages/HomePage';
 import ProductsPage from './pages/ProductsPage';
 import CartPage from './pages/CartPage';
 import CheckoutPage from './pages/CheckoutPage';
+import OrderPage from './pages/OrderPage';
+import OrdersPage from './pages/OrdersPage';
 import OrderHistoryPage from './pages/OrderHistoryPage';
 import OrderDetailPage from './pages/OrderDetailPage';
 import ProductDetailPage from './pages/ProductDetailPage';
@@ -34,6 +36,8 @@ function App() {
                 <Route path="/verify-email" element={<VerifyEmailPage />} />
                 <Route path="/products" element={<ProductsPage />} />
                 <Route path="/products/:id" element={<ProductDetailPage />} />
+                <Route path="/order" element={<OrdersPage />} />
+                <Route path="/order/:id" element={<OrderPage />} />
 
                 {/* Protected Routes */}
                 <Route path="/cart" element={
