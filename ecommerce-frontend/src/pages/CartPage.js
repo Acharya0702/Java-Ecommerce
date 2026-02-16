@@ -15,17 +15,17 @@ import { toast } from 'react-toastify';
 const CartPage = () => {
     const navigate = useNavigate();
     const dispatch = useDispatch();
-    const { user, token } = useSelector((state) => state.auth);
+    const { user, accessToken } = useSelector((state) => state.auth);
     const { items, totalItems, totalAmount, loading, error } = useSelector((state) => state.cart);
 
     const [updatingItems, setUpdatingItems] = useState({});
     const [quantities, setQuantities] = useState({});
 
     useEffect(() => {
-        if (token) {
+        if (accessToken) {
             dispatch(fetchCart());
         }
-    }, [token, dispatch]);
+    }, [accessToken, dispatch]);
 
     // Initialize quantities from items
     useEffect(() => {
@@ -100,7 +100,7 @@ const CartPage = () => {
     const tax = calculateTax();
     const total = totalAmount + shipping + tax;
 
-    if (!token) {
+    if (!accessToken) {
         return (
             <Container className="my-5 text-center">
                 <FaShoppingCart size={60} className="text-muted mb-4" />
@@ -183,7 +183,7 @@ const CartPage = () => {
                                         <td>
                                             <div className="d-flex align-items-center">
                                                 <img
-                                                    src={item.imageUrl || item.product?.imageUrl || 'https://via.placeholder.com/60x60'}
+                                                    src={item.productImageUrl || 'https://via.placeholder.com/60x60'}
                                                     alt={item.productName || item.product?.name}
                                                     style={{
                                                         width: '60px',

@@ -12,17 +12,19 @@ export const fetchCart = createAsyncThunk('cart/fetchCart', async (_, { rejectWi
     }
 });
 
-export const addToCart = createAsyncThunk('cart/addToCart', async (productId, { rejectWithValue }) => {
-    try {
-        console.log('addToCart API call for product:', productId);
-        const response = await api.post('/cart/items', { productId, quantity: 1 });
-        console.log('addToCart API response:', response.data);
-        return response.data;
-    } catch (error) {
-        console.error('addToCart error:', error.response?.data || error.message);
-        return rejectWithValue(error.response?.data || error.message);
+export const addToCart = createAsyncThunk('cart/addToCart',
+    async ({ productId, quantity }, { rejectWithValue }) => {  // Destructure the object
+        try {
+            console.log('addToCart API call for product:', productId, 'quantity:', quantity);
+            const response = await api.post('/cart/items', { productId, quantity });
+            console.log('addToCart API response:', response.data);
+            return response.data;
+        } catch (error) {
+            console.error('addToCart error:', error.response?.data || error.message);
+            return rejectWithValue(error.response?.data || error.message);
+        }
     }
-});
+);
 
 export const updateCartItem = createAsyncThunk('cart/updateCartItem',
     async ({ itemId, quantity }, { rejectWithValue }) => {

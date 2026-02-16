@@ -72,7 +72,7 @@ public class Cart {
         recalculateTotals();
     }
 
-    public void recalculateTotals() {
+    private void recalculateTotals() {
         this.totalItems = cartItems.stream()
                 .mapToInt(CartItem::getQuantity)
                 .sum();

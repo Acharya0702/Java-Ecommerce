@@ -25,7 +25,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("SELECT p FROM Product p WHERE p.isActive = true AND p.discountPrice IS NOT NULL AND p.discountPrice < p.price")
     List<Product> findProductsOnSale();
 
-    @Query("SELECT p FROM Product p WHERE p.isActive = true ORDER BY p.createdAt DESC LIMIT 10")
+    @Query(value = "SELECT * FROM products p WHERE p.is_active = true ORDER BY p.created_at DESC LIMIT 10", nativeQuery = true)
     List<Product> findFeaturedProducts();
 
     @Query("SELECT p FROM Product p WHERE p.isActive = true AND " +
