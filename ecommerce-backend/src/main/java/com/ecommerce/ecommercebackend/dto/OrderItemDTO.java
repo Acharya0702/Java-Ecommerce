@@ -1,4 +1,3 @@
-// src/main/java/com/ecommerce/ecommercebackend/dto/OrderItemDTO.java
 package com.ecommerce.ecommercebackend.dto;
 
 import lombok.Data;
@@ -8,9 +7,14 @@ import java.math.BigDecimal;
 public class OrderItemDTO {
     private Long id;
     private String productName;
-    private String productImage;
     private String sku;
-    private BigDecimal price;
     private Integer quantity;
+    private BigDecimal price;
     private BigDecimal subtotal;
+    private String productImage;
+
+    // Getters
+    public String getProductImage() {
+        return productImage != null ? productImage : "https://picsum.photos/300/200?random=1";
+    }
 }

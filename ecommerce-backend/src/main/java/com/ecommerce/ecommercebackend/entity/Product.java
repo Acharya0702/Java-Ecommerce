@@ -1,7 +1,7 @@
 package com.ecommerce.ecommercebackend.entity;
 
-import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.ToString;
@@ -22,6 +22,7 @@ import java.util.Set;
 @Table(name = "products")
 @Data
 @EntityListeners(AuditingEntityListener.class)
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Product {
 
     @Id
@@ -47,9 +48,19 @@ public class Product {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id")
-    @JsonIgnore  // CHANGE THIS LINE
+    @JsonIgnore
     @ToString.Exclude
     private Category category;
+
+    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonIgnore  // ADD THIS - Critical!
+    @ToString.Exclude  // ADD THIS
+    private Set<CartItem> cartItems = new HashSet<>();
+
+    @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonIgnore  // ADD THIS - Critical!
+    @ToString.Exclude  // ADD THIS
+    private Set<OrderItem> orderItems = new HashSet<>();
 
     private String imageUrl;
 
@@ -110,7 +121,6 @@ public class Product {
     @PreUpdate
     private void generateSku() {
         if (this.sku == null || this.sku.isEmpty()) {
-            // Generate SKU from name and timestamp
             String namePart = this.name.substring(0, Math.min(3, this.name.length())).toUpperCase();
             String timestamp = String.valueOf(System.currentTimeMillis() % 10000);
             this.sku = namePart + "-" + timestamp;

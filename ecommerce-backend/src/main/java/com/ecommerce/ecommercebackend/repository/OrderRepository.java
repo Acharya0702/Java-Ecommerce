@@ -6,25 +6,34 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 @Repository
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
-    List<Order> findByUserIdOrderByCreatedAtDesc(Long userId);
-
     Optional<Order> findByOrderNumber(String orderNumber);
 
-    boolean existsByOrderNumber(String orderNumber);
+    List<Order> findByUserId(Long userId);
 
-    @Query("SELECT o FROM Order o LEFT JOIN FETCH o.orderItems WHERE o.id = :id")
-    Optional<Order> findByIdWithOrderItems(@Param("id") Long id);
+    List<Order> findByUserIdOrderByCreatedAtDesc(Long userId);
 
-    @Query("SELECT o FROM Order o WHERE o.user.id = :userId AND o.status = :status")
-    List<Order> findByUserIdAndStatus(@Param("userId") Long userId,
-                                      @Param("status") Order.OrderStatus status);
+    List<Order> findByStatus(Order.OrderStatus status);
+
+    List<Order> findAllByOrderByCreatedAtDesc();
+
+    @Query("SELECT o FROM Order o WHERE o.user.id = :userId ORDER BY o.createdAt DESC")
+    List<Order> findRecentOrdersByUserId(@Param("userId") Long userId, @Param("limit") int limit);
 
     @Query("SELECT COUNT(o) FROM Order o WHERE o.user.id = :userId")
-    Long countByUserId(@Param("userId") Long userId);
+    long countByUserId(@Param("userId") Long userId);
+
+    @Query("SELECT SUM(o.totalAmount) FROM Order o WHERE o.user.id = :userId AND o.status = 'DELIVERED'")
+    BigDecimal getTotalSpentByUser(@Param("userId") Long userId);
+
+    @Query("SELECT o FROM Order o WHERE o.createdAt BETWEEN :startDate AND :endDate")
+    List<Order> findOrdersBetweenDates(@Param("startDate") LocalDateTime startDate,
+                                       @Param("endDate") LocalDateTime endDate);
 }

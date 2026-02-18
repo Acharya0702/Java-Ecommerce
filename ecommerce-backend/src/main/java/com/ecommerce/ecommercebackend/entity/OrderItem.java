@@ -1,6 +1,7 @@
 package com.ecommerce.ecommercebackend.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -15,7 +16,8 @@ import java.time.LocalDateTime;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = {"order", "product"}) // Add this
+@ToString(exclude = {"order", "product"})
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class OrderItem {
 
     @Id
@@ -29,7 +31,7 @@ public class OrderItem {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "product_id", nullable = false)
-    @JsonIgnore // ADD THIS - Critical fix!
+    @JsonIgnore
     private Product product;
 
     @Column(nullable = false)
@@ -61,12 +63,14 @@ public class OrderItem {
         }
     }
 
-    // Remove or comment out this method if not needed
-    // public void captureProductDetails(Product product) {
-    //     this.productName = product.getName();
-    //     this.productImageUrl = product.getImageUrl();
-    //     this.productSku = product.getSku();
-    //     this.price = product.getDiscountedPrice();
-    //     calculateSubtotal();
-    // }
+    // Add this method to capture product details at the time of order
+    public void captureProductDetails(Product product) {
+        if (product != null) {
+            this.productName = product.getName();
+            this.productImageUrl = product.getImageUrl();
+            this.productSku = product.getSku();
+            this.price = product.getDiscountedPrice();
+            calculateSubtotal();
+        }
+    }
 }

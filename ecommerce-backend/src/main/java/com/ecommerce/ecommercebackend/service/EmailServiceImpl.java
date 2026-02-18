@@ -317,9 +317,9 @@ public class EmailServiceImpl implements EmailService {
         }
 
         // Get status as string
-        String status = order.getStatus() != null ? order.getStatus() : "PENDING";
-        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod() : "CASH_ON_DELIVERY";
-        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus() : "PENDING";
+        String status = order.getStatus() != null ? order.getStatus().name() : "PENDING";
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().name() : "CASH_ON_DELIVERY";
+        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().name() : "PENDING";
 
         // Get address values (handle null addresses)
         AddressDTO shippingAddr = order.getShippingAddress();
