@@ -3,6 +3,7 @@ package com.ecommerce.ecommercebackend.entity;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
@@ -16,6 +17,7 @@ import java.util.Set;
 @Table(name = "users")
 @Data
 @EntityListeners(AuditingEntityListener.class)
+@EqualsAndHashCode(exclude = {"cart", "orders", "reviews"})
 public class User {
 
     @Id

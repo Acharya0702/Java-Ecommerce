@@ -1,12 +1,12 @@
 package com.ecommerce.ecommercebackend.dto;
 
-import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
+import jakarta.validation.constraints.NotBlank;
 
 @Data
 public class AddressDTO {
 
-    @NotBlank(message = "Street address is required")
+    @NotBlank(message = "Street is required")
     private String street;
 
     @NotBlank(message = "City is required")
@@ -21,6 +21,7 @@ public class AddressDTO {
     @NotBlank(message = "Country is required")
     private String country;
 
+    @NotBlank(message = "Phone is required")
     private String phone;
 
     @NotBlank(message = "Recipient name is required")

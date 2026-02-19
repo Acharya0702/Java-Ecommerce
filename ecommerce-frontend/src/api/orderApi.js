@@ -3,7 +3,7 @@ import api from './api';
 
 export const orderApi = {
     createOrder: (orderData) => {
-        return api.post('/orders/create-order', orderData);
+        return api.post('/orders', orderData);
     },
 
     getUserOrders: () => {

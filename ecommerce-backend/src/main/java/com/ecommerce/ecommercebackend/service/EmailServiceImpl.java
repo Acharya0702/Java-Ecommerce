@@ -1,7 +1,6 @@
 package com.ecommerce.ecommercebackend.service;
 
 import com.ecommerce.ecommercebackend.dto.OrderDTO;
-import com.ecommerce.ecommercebackend.dto.OrderItemDTO;
 import com.ecommerce.ecommercebackend.dto.AddressDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -79,7 +78,6 @@ public class EmailServiceImpl implements EmailService {
         log.info("🎯 EMAIL SERVICE - sendOrderConfirmation called");
         log.info("🎯 Order object: {}", order);
         log.info("🎯 Order userEmail: {}", order != null ? order.getUserEmail() : "order is null");
-
         if (order == null) {
             log.error("❌ Cannot send order confirmation: Order is null");
             return;
@@ -104,7 +102,7 @@ public class EmailServiceImpl implements EmailService {
                     to, order.getOrderNumber());
         } catch (Exception e) {
             log.error("❌ Failed to send order confirmation email to: {} for order: {}. Error: {}",
-                    to, order.getOrderNumber(), e.getMessage(), e);
+                    to, order.getOrderNumber(), e.getMessage());
         }
     }
 
@@ -128,7 +126,7 @@ public class EmailServiceImpl implements EmailService {
                     to, order.getOrderNumber());
         } catch (Exception e) {
             log.error("❌ Failed to send order shipped email to: {} for order: {}. Error: {}",
-                    to, order.getOrderNumber(), e.getMessage(), e);
+                    to, order.getOrderNumber(), e.getMessage());
         }
     }
 
@@ -152,7 +150,7 @@ public class EmailServiceImpl implements EmailService {
                     to, order.getOrderNumber());
         } catch (Exception e) {
             log.error("❌ Failed to send order delivered email to: {} for order: {}. Error: {}",
-                    to, order.getOrderNumber(), e.getMessage(), e);
+                    to, order.getOrderNumber(), e.getMessage());
         }
     }
 
@@ -255,13 +253,6 @@ public class EmailServiceImpl implements EmailService {
     }
 
     private String buildOrderConfirmationHtml(OrderDTO order) {
-        if (order == null || order.getCreatedAt() == null) {
-            return buildSimpleOrderConfirmation(
-                    order != null ? order.getOrderNumber() : "N/A",
-                    order != null ? order.getUserName() : "Customer"
-            );
-        }
-
         String orderDate = DateTimeFormatter.ofPattern("MMMM dd, yyyy")
                 .format(order.getCreatedAt());
         String orderTime = DateTimeFormatter.ofPattern("hh:mm a")
@@ -269,10 +260,8 @@ public class EmailServiceImpl implements EmailService {
 
         // Build order items table
         StringBuilder orderItemsHtml = new StringBuilder();
-        if (order.getOrderItems() != null && !order.getOrderItems().isEmpty()) {
-            for (OrderItemDTO item : order.getOrderItems()) {
-                if (item == null) continue;
-
+        if (order.getOrderItems() != null) {
+            for (OrderDTO.OrderItemDTO item : order.getOrderItems()) {
                 String productImage = item.getProductImage() != null ?
                         item.getProductImage() : "https://picsum.photos/60/60?random=" + item.getId();
                 String productName = item.getProductName() != null ? item.getProductName() : "Product";
@@ -306,20 +295,12 @@ public class EmailServiceImpl implements EmailService {
                         subtotal
                 ));
             }
-        } else {
-            orderItemsHtml.append("""
-                <tr>
-                    <td colspan="4" style="padding: 15px; text-align: center; color: #666;">
-                        No items in this order
-                    </td>
-                </tr>
-            """);
         }
 
-        // Get status as string
-        String status = order.getStatus() != null ? order.getStatus().name() : "PENDING";
-        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().name() : "CASH_ON_DELIVERY";
-        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().name() : "PENDING";
+        // Convert enums to strings
+        String status = order.getStatus() != null ? order.getStatus().toString() : "PENDING";
+        String paymentMethod = order.getPaymentMethod() != null ? order.getPaymentMethod().toString() : "N/A";
+        String paymentStatus = order.getPaymentStatus() != null ? order.getPaymentStatus().toString() : "PENDING";
 
         // Get address values (handle null addresses)
         AddressDTO shippingAddr = order.getShippingAddress();
@@ -327,21 +308,21 @@ public class EmailServiceImpl implements EmailService {
 
         String shipRecipient = shippingAddr != null && shippingAddr.getRecipientName() != null ?
                 shippingAddr.getRecipientName() : order.getUserName();
-        String shipStreet = shippingAddr != null && shippingAddr.getStreet() != null ? shippingAddr.getStreet() : "";
-        String shipCity = shippingAddr != null && shippingAddr.getCity() != null ? shippingAddr.getCity() : "";
-        String shipState = shippingAddr != null && shippingAddr.getState() != null ? shippingAddr.getState() : "";
-        String shipZip = shippingAddr != null && shippingAddr.getZipCode() != null ? shippingAddr.getZipCode() : "";
-        String shipCountry = shippingAddr != null && shippingAddr.getCountry() != null ? shippingAddr.getCountry() : "";
-        String shipPhone = shippingAddr != null && shippingAddr.getPhone() != null ? shippingAddr.getPhone() : "";
+        String shipStreet = shippingAddr != null ? shippingAddr.getStreet() : "";
+        String shipCity = shippingAddr != null ? shippingAddr.getCity() : "";
+        String shipState = shippingAddr != null ? shippingAddr.getState() : "";
+        String shipZip = shippingAddr != null ? shippingAddr.getZipCode() : "";
+        String shipCountry = shippingAddr != null ? shippingAddr.getCountry() : "";
+        String shipPhone = shippingAddr != null ? shippingAddr.getPhone() : "";
 
         String billRecipient = billingAddr != null && billingAddr.getRecipientName() != null ?
                 billingAddr.getRecipientName() : order.getUserName();
-        String billStreet = billingAddr != null && billingAddr.getStreet() != null ? billingAddr.getStreet() : shipStreet;
-        String billCity = billingAddr != null && billingAddr.getCity() != null ? billingAddr.getCity() : shipCity;
-        String billState = billingAddr != null && billingAddr.getState() != null ? billingAddr.getState() : shipState;
-        String billZip = billingAddr != null && billingAddr.getZipCode() != null ? billingAddr.getZipCode() : shipZip;
-        String billCountry = billingAddr != null && billingAddr.getCountry() != null ? billingAddr.getCountry() : shipCountry;
-        String billPhone = billingAddr != null && billingAddr.getPhone() != null ? billingAddr.getPhone() : shipPhone;
+        String billStreet = billingAddr != null ? billingAddr.getStreet() : "";
+        String billCity = billingAddr != null ? billingAddr.getCity() : "";
+        String billState = billingAddr != null ? billingAddr.getState() : "";
+        String billZip = billingAddr != null ? billingAddr.getZipCode() : "";
+        String billCountry = billingAddr != null ? billingAddr.getCountry() : "";
+        String billPhone = billingAddr != null ? billingAddr.getPhone() : "";
 
         return String.format("""
             <!DOCTYPE html>
@@ -374,7 +355,6 @@ public class EmailServiceImpl implements EmailService {
                     .status-processing { background-color: #dbeafe; color: #1e40af; }
                     .status-shipped { background-color: #ede9fe; color: #5b21b6; }
                     .status-delivered { background-color: #dcfce7; color: #166534; }
-                    .status-cancelled { background-color: #fee2e2; color: #991b1b; }
                 </style>
             </head>
             <body>
@@ -519,7 +499,7 @@ public class EmailServiceImpl implements EmailService {
 
                 // Frontend URL and year
                 frontendUrl,
-                order.getId() != null ? order.getId() : 0,
+                order.getId(),
                 java.time.Year.now().getValue()
         );
     }
@@ -531,13 +511,11 @@ public class EmailServiceImpl implements EmailService {
                 DateTimeFormatter.ofPattern("MMMM dd, yyyy").format(order.getCreatedAt()) : "N/A";
 
         AddressDTO shippingAddr = order.getShippingAddress();
-        String shipRecipient = shippingAddr != null && shippingAddr.getRecipientName() != null ?
-                shippingAddr.getRecipientName() : order.getUserName();
-        String shipStreet = shippingAddr != null && shippingAddr.getStreet() != null ? shippingAddr.getStreet() : "";
-        String shipCity = shippingAddr != null && shippingAddr.getCity() != null ? shippingAddr.getCity() : "";
-        String shipState = shippingAddr != null && shippingAddr.getState() != null ? shippingAddr.getState() : "";
-        String shipZip = shippingAddr != null && shippingAddr.getZipCode() != null ? shippingAddr.getZipCode() : "";
-        String shipCountry = shippingAddr != null && shippingAddr.getCountry() != null ? shippingAddr.getCountry() : "";
+        String shipStreet = shippingAddr != null ? shippingAddr.getStreet() : "";
+        String shipCity = shippingAddr != null ? shippingAddr.getCity() : "";
+        String shipState = shippingAddr != null ? shippingAddr.getState() : "";
+        String shipZip = shippingAddr != null ? shippingAddr.getZipCode() : "";
+        String shipCountry = shippingAddr != null ? shippingAddr.getCountry() : "";
 
         return String.format("""
             <!DOCTYPE html>
@@ -577,7 +555,6 @@ public class EmailServiceImpl implements EmailService {
                     
                     <p><strong>Delivery Address:</strong></p>
                     <p>
-                        <strong>%s</strong><br>
                         %s<br>
                         %s, %s %s<br>
                         %s
@@ -607,7 +584,6 @@ public class EmailServiceImpl implements EmailService {
                 trackingNumber != null ? trackingNumber : "N/A",
                 frontendUrl,
                 trackingNumber != null ? trackingNumber : "",
-                shipRecipient,
                 shipStreet,
                 shipCity,
                 shipState,
@@ -624,13 +600,9 @@ public class EmailServiceImpl implements EmailService {
                 DateTimeFormatter.ofPattern("MMMM dd, yyyy").format(order.getCreatedAt()) : "N/A";
 
         AddressDTO shippingAddr = order.getShippingAddress();
-        String shipRecipient = shippingAddr != null && shippingAddr.getRecipientName() != null ?
-                shippingAddr.getRecipientName() : order.getUserName();
-        String shipStreet = shippingAddr != null && shippingAddr.getStreet() != null ? shippingAddr.getStreet() : "";
-        String shipCity = shippingAddr != null && shippingAddr.getCity() != null ? shippingAddr.getCity() : "";
-        String shipState = shippingAddr != null && shippingAddr.getState() != null ? shippingAddr.getState() : "";
-        String shipZip = shippingAddr != null && shippingAddr.getZipCode() != null ? shippingAddr.getZipCode() : "";
-        String shipCountry = shippingAddr != null && shippingAddr.getCountry() != null ? shippingAddr.getCountry() : "";
+        String shipCity = shippingAddr != null ? shippingAddr.getCity() : "";
+        String shipState = shippingAddr != null ? shippingAddr.getState() : "";
+        String shipCountry = shippingAddr != null ? shippingAddr.getCountry() : "";
 
         return String.format("""
             <!DOCTYPE html>
@@ -662,19 +634,18 @@ public class EmailServiceImpl implements EmailService {
                         <h3 style="margin-top: 0;">Order Details</h3>
                         <p><strong>Order Date:</strong> %s</p>
                         <p><strong>Order Total:</strong> $%.2f</p>
-                        <p><strong>Delivery Address:</strong></p>
-                        <p>
-                            <strong>%s</strong><br>
-                            %s<br>
-                            %s, %s %s<br>
-                            %s
-                        </p>
+                        <p><strong>Delivery Address:</strong> %s, %s, %s</p>
                     </div>
                     
                     <p>We hope you're satisfied with your purchase! If you have a moment, we'd love to hear about your experience.</p>
                     
                     <div style="text-align: center; margin: 30px 0;">
-                        <a href="%s/orders/%d/review" class="button">Leave a Review</a>
+                        <a href="%s/orders/%d/rate" class="button">Leave a Review</a>
+                    </div>
+                    
+                    <p>Or rate your purchase:</p>
+                    <div class="rating" style="text-align: center;">
+                        ★★★★★
                     </div>
                     
                     <div style="background-color: #f0f9ff; padding: 20px; border-radius: 5px; margin-top: 20px;">
@@ -697,14 +668,11 @@ public class EmailServiceImpl implements EmailService {
                 order.getOrderNumber() != null ? order.getOrderNumber() : "N/A",
                 orderDate,
                 order.getTotalAmount() != null ? order.getTotalAmount().doubleValue() : 0.0,
-                shipRecipient,
-                shipStreet,
                 shipCity,
                 shipState,
-                shipZip,
                 shipCountry,
                 frontendUrl,
-                order.getId() != null ? order.getId() : 0,
+                order.getId(),
                 frontendUrl,
                 java.time.Year.now().getValue()
         );
@@ -746,8 +714,8 @@ public class EmailServiceImpl implements EmailService {
             </body>
             </html>
             """,
-                customerName != null ? customerName : "Customer",
-                orderNumber != null ? orderNumber : "N/A",
+                customerName,
+                orderNumber,
                 frontendUrl
         );
     }

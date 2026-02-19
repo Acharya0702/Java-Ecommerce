@@ -37,6 +37,7 @@ public class Order {
     private User user;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore  // ADD THIS - Critical!
     private Set<OrderItem> orderItems = new HashSet<>();
 
     @Column(name = "total_amount", nullable = false, precision = 10, scale = 2)

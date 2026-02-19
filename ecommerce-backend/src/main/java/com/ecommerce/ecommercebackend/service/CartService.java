@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -35,25 +36,65 @@ public class CartService {
     public CartDTO getCurrentUserCart() {
         try {
             User currentUser = authService.getCurrentUser();
-            log.info("Getting cart for user: {}", currentUser.getId());
+            log.info("Step 1: Got current user: {}", currentUser.getId());
 
-            // Get cart or create if not exists
+            // Find cart or create one if it doesn't exist
             Cart cart = cartRepository.findByUserId(currentUser.getId())
                     .orElseGet(() -> {
-                        log.info("Creating new cart for user: {}", currentUser.getId());
-                        return createCartForUser(currentUser.getId());
+                        log.info("Step 2: Creating new cart for user: {}", currentUser.getId());
+                        Cart newCart = new Cart();
+                        newCart.setUser(currentUser);
+                        newCart.setTotalAmount(BigDecimal.ZERO);
+                        newCart.setTotalItems(0);
+                        newCart.setCreatedAt(LocalDateTime.now());
+                        newCart.setUpdatedAt(LocalDateTime.now());
+                        Cart savedCart = cartRepository.save(newCart);
+                        log.info("Step 2a: Cart created with ID: {}", savedCart.getId());
+                        return savedCart;
                     });
 
-            // Get cart items separately to avoid lazy loading issues
-            List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
+            log.info("Step 3: Cart found/created with ID: {}, TotalItems: {}", cart.getId(), cart.getTotalItems());
 
-            // Build DTO
-            return buildCartDTO(cart, cartItems);
+            // Fetch cart items - this might return empty list, that's OK
+            List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
+            log.info("Step 4: Found {} items in cart", cartItems.size());
+
+            // Log each item if any
+            for (int i = 0; i < cartItems.size(); i++) {
+                CartItem item = cartItems.get(i);
+                log.info("Step 4.{}: Item ID: {}, Product: {}, Quantity: {}",
+                        i+1, item.getId(),
+                        item.getProduct() != null ? item.getProduct().getName() : "null",
+                        item.getQuantity());
+            }
+
+            // Convert to DTO
+            CartDTO cartDTO = convertToDTO(cart, cartItems);
+            log.info("Step 5: Converted to DTO, items in DTO: {}", cartDTO.getCartItems().size());
+
+            return cartDTO;
 
         } catch (Exception e) {
-            log.error("Error getting cart: {}", e.getMessage(), e);
-            // Return empty cart on error
-            return buildEmptyCartDTO();
+            log.error("ERROR in getCurrentUserCart: {}", e.getMessage(), e);
+
+            // Return an empty cart DTO instead of throwing
+            CartDTO emptyCart = new CartDTO();
+            emptyCart.setCartItems(Collections.emptyList());
+            emptyCart.setTotalAmount(BigDecimal.ZERO);
+            emptyCart.setTotalItems(0);
+            emptyCart.setEmpty(true);
+
+            // Try to get user info for the response
+            try {
+                User currentUser = authService.getCurrentUser();
+                emptyCart.setUserId(currentUser.getId());
+                emptyCart.setUserEmail(currentUser.getEmail());
+                log.info("Returning empty cart for user: {}", currentUser.getId());
+            } catch (Exception ex) {
+                log.error("Could not get user info for empty cart: {}", ex.getMessage());
+            }
+
+            return emptyCart;
         }
     }
 
@@ -94,7 +135,7 @@ public class CartService {
 
             // Return updated cart
             List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
-            return buildCartDTO(cart, cartItems);
+            return convertToDTO(cart, cartItems);
 
         } catch (RuntimeException e) {
             log.error("Error in addItemToCart: {}", e.getMessage());
@@ -135,7 +176,7 @@ public class CartService {
 
             // Return updated cart
             List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
-            return buildCartDTO(cart, cartItems);
+            return convertToDTO(cart, cartItems);
 
         } catch (Exception e) {
             log.error("Error updating cart item: {}", e.getMessage(), e);
@@ -158,7 +199,7 @@ public class CartService {
 
             // Return updated cart
             List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
-            return buildCartDTO(cart, cartItems);
+            return convertToDTO(cart, cartItems);
 
         } catch (Exception e) {
             log.error("Error removing cart item: {}", e.getMessage(), e);
@@ -181,7 +222,7 @@ public class CartService {
             cart.setUpdatedAt(LocalDateTime.now());
             cartRepository.save(cart);
 
-            return buildCartDTO(cart, new ArrayList<>());
+            return convertToDTO(cart, new ArrayList<>());
 
         } catch (Exception e) {
             log.error("Error clearing cart: {}", e.getMessage(), e);
@@ -276,49 +317,52 @@ public class CartService {
         cartRepository.save(cart);
     }
 
-    private CartDTO buildCartDTO(Cart cart, List<CartItem> cartItems) {
+    private CartDTO convertToDTO(Cart cart, List<CartItem> cartItems) {
         CartDTO dto = new CartDTO();
-        dto.setId(cart.getId());
 
-        if (cart.getUser() != null) {
-            dto.setUserId(cart.getUser().getId());
-            dto.setUserEmail(cart.getUser().getEmail());
+        // Null checks
+        if (cart == null) {
+            return createEmptyCartDTO();
         }
 
-        dto.setTotalAmount(cart.getTotalAmount());
-        dto.setTotalItems(cart.getTotalItems());
+        dto.setId(cart.getId());
+        dto.setUserId(cart.getUser() != null ? cart.getUser().getId() : null);
+        dto.setUserEmail(cart.getUser() != null ? cart.getUser().getEmail() : null);
+        dto.setTotalAmount(cart.getTotalAmount() != null ? cart.getTotalAmount() : BigDecimal.ZERO);
+        dto.setTotalItems(cart.getTotalItems() != null ? cart.getTotalItems() : 0);
         dto.setCreatedAt(cart.getCreatedAt());
         dto.setUpdatedAt(cart.getUpdatedAt());
 
-        // Convert cart items to DTOs
-        List<CartItemDTO> cartItemDTOs = new ArrayList<>();
-        for (CartItem item : cartItems) {
-            CartItemDTO itemDTO = new CartItemDTO();
-            itemDTO.setId(item.getId());
-
-            if (item.getProduct() != null) {
-                itemDTO.setProductId(item.getProduct().getId());
-                itemDTO.setProductName(item.getProduct().getName());
-                itemDTO.setProductImageUrl(item.getProduct().getImageUrl());
+        // Handle cart items - even if empty
+        List<CartItemDTO> itemDTOs = new ArrayList<>();
+        if (cartItems != null && !cartItems.isEmpty()) {
+            for (CartItem item : cartItems) {
+                CartItemDTO itemDTO = new CartItemDTO();
+                itemDTO.setId(item.getId());
+                itemDTO.setProductId(item.getProduct() != null ? item.getProduct().getId() : null);
+                itemDTO.setProductName(item.getProduct() != null ? item.getProduct().getName() : "Unknown Product");
+                itemDTO.setQuantity(item.getQuantity() != null ? item.getQuantity() : 0);
+                itemDTO.setPrice(item.getPrice() != null ? item.getPrice() : BigDecimal.ZERO);
+                itemDTO.setSubtotal(item.getSubtotal() != null ? item.getSubtotal() : BigDecimal.ZERO);
+                itemDTO.setProductImageUrl(item.getProduct() != null ? item.getProduct().getImageUrl() : null);
+                itemDTO.setCreatedAt(item.getCreatedAt());
+                itemDTOs.add(itemDTO);
             }
-
-            itemDTO.setQuantity(item.getQuantity());
-            itemDTO.setPrice(item.getPrice());
-            itemDTO.setSubtotal(item.getSubtotal());
-            itemDTO.setCreatedAt(item.getCreatedAt());
-
-            cartItemDTOs.add(itemDTO);
         }
+        dto.setCartItems(itemDTOs);
 
-        dto.setCartItems(cartItemDTOs);
+        // Set empty flag
+        dto.setEmpty(itemDTOs.isEmpty());
+
         return dto;
     }
 
-    private CartDTO buildEmptyCartDTO() {
+    private CartDTO createEmptyCartDTO() {
         CartDTO dto = new CartDTO();
-        dto.setCartItems(new ArrayList<>());
+        dto.setCartItems(Collections.emptyList());
         dto.setTotalAmount(BigDecimal.ZERO);
         dto.setTotalItems(0);
+        dto.setEmpty(true);
         return dto;
     }
 }

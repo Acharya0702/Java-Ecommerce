@@ -44,6 +44,7 @@ public class SecurityConfig {
                         .requestMatchers("/public/**").permitAll()
                         .requestMatchers("/products/**").permitAll()
                         .requestMatchers("/categories/**").permitAll()
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         // Swagger UI
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         // All other requests require authentication

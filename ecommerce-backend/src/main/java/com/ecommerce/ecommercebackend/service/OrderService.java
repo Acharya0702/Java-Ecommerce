@@ -7,11 +7,11 @@ import com.ecommerce.ecommercebackend.entity.*;
 import com.ecommerce.ecommercebackend.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.Hibernate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -28,49 +28,34 @@ public class OrderService {
     private final UserRepository userRepository;
     private final AuthService authService;
     private final OrderItemRepository orderItemRepository;
-    private final EmailService emailService;  // Added email service
+    private final EmailService emailService;
 
     @Transactional
     public OrderDTO createOrder(OrderRequestDTO request) {
         User currentUser = authService.getCurrentUser();
         log.info("=== STARTING ORDER CREATION ===");
         log.info("User: {}", currentUser.getEmail());
-        log.info("User ID: {}", currentUser.getId());
 
         try {
             // Get user's cart
             Cart cart = cartRepository.findByUserId(currentUser.getId())
                     .orElseThrow(() -> new RuntimeException("Cart not found"));
-            log.info("Cart found: ID={}, Total Items={}, Total Amount={}",
-                    cart.getId(), cart.getTotalItems(), cart.getTotalAmount());
 
             // Get cart items with products
             List<CartItem> cartItems = cartItemRepository.findAllByCartIdWithProduct(cart.getId());
-            log.info("Found {} cart items", cartItems.size());
-
             if (cartItems.isEmpty()) {
                 throw new RuntimeException("Cart is empty");
             }
 
-            // Log each cart item
+            // Validate stock
             for (CartItem cartItem : cartItems) {
                 Product product = cartItem.getProduct();
-                log.info("Cart Item: ID={}, Product ID={}, Product Name={}, Quantity={}, Price={}",
-                        cartItem.getId(),
-                        product != null ? product.getId() : "NULL",
-                        product != null ? product.getName() : "NULL",
-                        cartItem.getQuantity(),
-                        cartItem.getPrice());
-
-                if (product == null) {
-                    throw new RuntimeException("Product not found in cart item ID: " + cartItem.getId());
-                }
                 if (product.getStockQuantity() < cartItem.getQuantity()) {
                     throw new RuntimeException("Insufficient stock for product: " + product.getName());
                 }
             }
 
-            // Create order WITHOUT orderItems initially
+            // Create order
             Order order = new Order();
             order.setUser(currentUser);
             order.setOrderNumber(generateOrderNumber());
@@ -81,16 +66,13 @@ public class OrderService {
 
             // Set addresses
             order.setShippingAddress(createAddress(request.getShippingAddress()));
-
-            if (request.getBillingAddress() != null) {
-                order.setBillingAddress(createAddress(request.getBillingAddress()));
-            } else {
-                order.setBillingAddress(createAddress(request.getShippingAddress()));
-            }
+            order.setBillingAddress(request.getBillingAddress() != null ?
+                    createAddress(request.getBillingAddress()) :
+                    createAddress(request.getShippingAddress()));
 
             // Calculate amounts
             BigDecimal subtotal = cart.getTotalAmount();
-            BigDecimal shippingAmount = BigDecimal.ZERO; // Free shipping for now
+            BigDecimal shippingAmount = BigDecimal.ZERO;
             BigDecimal taxAmount = subtotal.multiply(new BigDecimal("0.10"));
             BigDecimal totalAmount = subtotal.add(shippingAmount).add(taxAmount);
 
@@ -100,19 +82,15 @@ public class OrderService {
             order.setTotalAmount(totalAmount);
 
             // Save order first
-            log.info("Saving order with number: {}", order.getOrderNumber());
+            log.info("Saving order...");
             order = orderRepository.save(order);
             log.info("Order saved with ID: {}", order.getId());
 
             // Create and save order items
-            List<OrderItem> orderItems = new ArrayList<>();
+            List<OrderItem> savedOrderItems = new ArrayList<>();
             for (CartItem cartItem : cartItems) {
                 Product product = cartItem.getProduct();
 
-                log.info("Creating order item for product ID: {}, Name: {}",
-                        product.getId(), product.getName());
-
-                // Create order item WITH product
                 OrderItem orderItem = new OrderItem();
                 orderItem.setOrder(order);
                 orderItem.setProduct(product);
@@ -123,64 +101,129 @@ public class OrderService {
                 orderItem.setProductSku(product.getSku());
                 orderItem.calculateSubtotal();
 
-                log.info("Order item details: Quantity={}, Price={}, Subtotal={}, ProductSku={}",
-                        orderItem.getQuantity(), orderItem.getPrice(), orderItem.getSubtotal(), orderItem.getProductSku());
-
-                // Save order item
-                try {
-                    orderItem = orderItemRepository.save(orderItem);
-                    log.info("Order item saved with ID: {}", orderItem.getId());
-                    orderItems.add(orderItem);
-
-                } catch (Exception e) {
-                    log.error("Failed to save order item for product {}: {}", product.getId(), e.getMessage(), e);
-                    throw new RuntimeException("Failed to save order item: " + e.getMessage());
-                }
+                orderItem = orderItemRepository.save(orderItem);
+                savedOrderItems.add(orderItem);
 
                 // Update stock
-                int newStock = product.getStockQuantity() - cartItem.getQuantity();
-                log.info("Product {} stock update: {} - {} = {}",
-                        product.getId(), product.getStockQuantity(), cartItem.getQuantity(), newStock);
-
-                if (newStock < 0) {
-                    throw new RuntimeException("Stock would go negative for product: " + product.getName());
-                }
-                product.setStockQuantity(newStock);
+                product.setStockQuantity(product.getStockQuantity() - cartItem.getQuantity());
                 productRepository.save(product);
-                log.info("Stock updated for product {}", product.getId());
             }
 
             // Clear cart
-            log.info("Clearing cart ID: {}", cart.getId());
             cartItemRepository.deleteByCartId(cart.getId());
             cart.setTotalAmount(BigDecimal.ZERO);
             cart.setTotalItems(0);
             cartRepository.save(cart);
-            log.info("Cart cleared");
 
             log.info("Order created successfully: {}", order.getOrderNumber());
 
-            // Create complete DTO for response
-            OrderDTO createdOrder = createCompleteOrderDTO(order, orderItems);
+            // Build DTO
+            OrderDTO orderDTO = buildOrderDTO(order, savedOrderItems);
 
-            // Send order confirmation email (asynchronous)
+            // 🔥 SEND ORDER CONFIRMATION EMAIL (ASYNC) 🔥
             try {
-                emailService.sendOrderConfirmation(createdOrder);
-                log.info("Order confirmation email triggered for order: {}", order.getOrderNumber());
+                log.info("Attempting to send order confirmation email to: {}", currentUser.getEmail());
+                emailService.sendOrderConfirmation(orderDTO);
+                log.info("Order confirmation email sent successfully to: {}", currentUser.getEmail());
             } catch (Exception e) {
-                log.error("Failed to send order confirmation email for order {}: {}",
-                        order.getOrderNumber(), e.getMessage());
-                // Don't fail the order if email fails
+                // Don't fail the order if email fails, just log it
+                log.error("Failed to send order confirmation email: {}", e.getMessage(), e);
             }
 
-            return createdOrder;
+            return orderDTO;
 
         } catch (Exception e) {
-            log.error("=== ORDER CREATION FAILED ===");
-            log.error("Error type: {}", e.getClass().getName());
-            log.error("Error message: {}", e.getMessage());
-            log.error("Stack trace:", e);
+            log.error("Order creation failed: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to create order: " + e.getMessage());
+        }
+    }
+
+    private Order.Address createAddress(AddressDTO addressDTO) {
+        if (addressDTO == null) return null;
+
+        Order.Address address = new Order.Address();
+        address.setStreet(addressDTO.getStreet());
+        address.setCity(addressDTO.getCity());
+        address.setState(addressDTO.getState());
+        address.setZipCode(addressDTO.getZipCode());
+        address.setCountry(addressDTO.getCountry());
+        address.setPhone(addressDTO.getPhone());
+        address.setRecipientName(addressDTO.getRecipientName());
+        return address;
+    }
+
+    private OrderDTO createOrderDTO(Order order, Set<OrderItem> orderItems) {
+        OrderDTO dto = new OrderDTO();
+        dto.setId(order.getId());
+        dto.setOrderNumber(order.getOrderNumber());
+        dto.setUserId(order.getUser().getId());
+        dto.setUserName(order.getUser().getFullName());
+        dto.setTotalAmount(order.getTotalAmount());
+        dto.setSubtotal(order.getSubtotal());
+        dto.setTaxAmount(order.getTaxAmount());
+        dto.setShippingAmount(order.getShippingAmount());
+        dto.setDiscountAmount(order.getDiscountAmount());
+        dto.setStatus(order.getStatus());
+        dto.setPaymentMethod(order.getPaymentMethod());
+        dto.setPaymentStatus(order.getPaymentStatus());
+        dto.setTrackingNumber(order.getTrackingNumber());
+        dto.setShippingMethod(order.getShippingMethod());
+        dto.setNotes(order.getNotes());
+        dto.setCreatedAt(order.getCreatedAt());
+        dto.setUpdatedAt(order.getUpdatedAt());
+        dto.setShippedAt(order.getShippedAt());
+        dto.setDeliveredAt(order.getDeliveredAt());
+
+        // Convert shipping address
+        if (order.getShippingAddress() != null) {
+            dto.setShippingAddress(convertToAddressDTO(order.getShippingAddress()));
+        }
+
+        // Convert billing address
+        if (order.getBillingAddress() != null) {
+            dto.setBillingAddress(convertToAddressDTO(order.getBillingAddress()));
+        }
+
+        // Convert order items - WITHOUT accessing product relationships
+        if (orderItems != null && !orderItems.isEmpty()) {
+            List<OrderDTO.OrderItemDTO> orderItemDTOs = orderItems.stream()
+                    .map(this::convertToOrderItemDTO)
+                    .collect(Collectors.toList());
+            dto.setOrderItems(orderItemDTOs);
+        } else {
+            dto.setOrderItems(Collections.emptyList());
+        }
+
+        return dto;
+    }
+
+    @Transactional(readOnly = true)
+    public OrderDTO getOrderById(Long orderId) {
+        User currentUser = authService.getCurrentUser();
+        log.info("Fetching order: {} for user: {}", orderId, currentUser.getId());
+
+        try {
+            Order order = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new RuntimeException("Order not found with id: " + orderId));
+
+            // Check if order belongs to current user
+            if (!order.getUser().getId().equals(currentUser.getId())) {
+                throw new RuntimeException("Unauthorized access to order");
+            }
+
+            // Explicitly fetch order items with products
+            List<OrderItem> items = orderItemRepository.findByOrderIdWithProduct(order.getId());
+            log.info("Found {} items for order", items.size());
+
+            // Build DTO manually
+            return buildOrderDTO(order, items);
+
+        } catch (RuntimeException e) {
+            log.error("Error fetching order: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            log.error("Unexpected error fetching order: {}", e.getMessage(), e);
+            throw new RuntimeException("Error fetching order: " + e.getMessage());
         }
     }
 
@@ -191,69 +234,27 @@ public class OrderService {
 
         try {
             List<Order> orders = orderRepository.findByUserIdOrderByCreatedAtDesc(currentUser.getId());
-            log.info("Found {} orders for user {}", orders.size(), currentUser.getId());
+            log.info("Found {} orders for user", orders.size());
 
-            return orders.stream()
-                    .map(order -> {
-                        OrderDTO dto = new OrderDTO();
-                        dto.setId(order.getId());
-                        dto.setOrderNumber(order.getOrderNumber());
-                        dto.setUserId(order.getUser().getId());
-                        dto.setUserName(order.getUser().getFullName());
-                        dto.setUserEmail(order.getUser().getEmail());
-                        dto.setTotalAmount(order.getTotalAmount());
-                        dto.setStatus(order.getStatus());
-                        dto.setPaymentMethod(order.getPaymentMethod());
-                        dto.setPaymentStatus(order.getPaymentStatus());
-                        dto.setCreatedAt(order.getCreatedAt());
+            List<OrderDTO> orderDTOs = new ArrayList<>();
+            for (Order order : orders) {
+                // For each order, explicitly fetch its items
+                List<OrderItem> items = orderItemRepository.findByOrderIdWithProduct(order.getId());
+                log.info("Order {} has {} items", order.getOrderNumber(), items.size());
 
-                        // For list view, we don't need order items or addresses
-                        dto.setOrderItems(Collections.emptyList());
+                // Build DTO manually
+                OrderDTO dto = buildOrderDTO(order, items);
+                orderDTOs.add(dto);
+            }
 
-                        return dto;
-                    })
-                    .collect(Collectors.toList());
+            return orderDTOs;
 
         } catch (Exception e) {
             log.error("Error fetching user orders: {}", e.getMessage(), e);
-            throw new RuntimeException("Failed to fetch orders: " + e.getMessage());
+            return Collections.emptyList();
         }
     }
 
-    @Transactional(readOnly = true)
-    public OrderDTO getOrderById(Long orderId) {
-        User currentUser = authService.getCurrentUser();
-        log.info("Fetching order: {} for user: {}", orderId, currentUser.getId());
-
-        try {
-            // Get order
-            Order order = orderRepository.findById(orderId)
-                    .orElseThrow(() -> new RuntimeException("Order not found"));
-
-            log.info("Order found: ID={}, Number={}", order.getId(), order.getOrderNumber());
-
-            // Check if order belongs to current user
-            if (!order.getUser().getId().equals(currentUser.getId())) {
-                log.warn("Unauthorized access: Order {} belongs to user {}, requested by user {}",
-                        orderId, order.getUser().getId(), currentUser.getId());
-                throw new RuntimeException("Unauthorized access to order");
-            }
-
-            // Get order items
-            List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
-            log.info("Found {} order items for order {}", orderItems.size(), orderId);
-
-            // Create complete DTO
-            return createCompleteOrderDTO(order, orderItems);
-
-        } catch (RuntimeException e) {
-            log.error("Business error fetching order {}: {}", orderId, e.getMessage());
-            throw e;
-        } catch (Exception e) {
-            log.error("Unexpected error fetching order {}: {}", orderId, e.getMessage(), e);
-            throw new RuntimeException("Failed to fetch order: " + e.getMessage());
-        }
-    }
 
     @Transactional(readOnly = true)
     public OrderDTO getOrderByNumber(String orderNumber) {
@@ -261,90 +262,104 @@ public class OrderService {
         log.info("Fetching order by number: {} for user: {}", orderNumber, currentUser.getId());
 
         try {
+            // First get the order
             Order order = orderRepository.findByOrderNumber(orderNumber)
-                    .orElseThrow(() -> new RuntimeException("Order not found"));
+                    .orElseThrow(() -> new RuntimeException("Order not found with number: " + orderNumber));
 
-            // Check if order belongs to current user
+            log.info("Order found: ID={}, UserID={}, CurrentUserID={}",
+                    order.getId(), order.getUser().getId(), currentUser.getId());
+
+            // Check authorization
             if (!order.getUser().getId().equals(currentUser.getId())) {
                 throw new RuntimeException("Unauthorized access to order");
             }
 
-            // Get order items
-            List<OrderItem> orderItems = orderItemRepository.findByOrderId(order.getId());
+            // EXPLICITLY fetch order items with products
+            List<OrderItem> items = orderItemRepository.findByOrderIdWithProduct(order.getId());
+            log.info("Found {} items for order", items.size());
 
-            // Create complete DTO
-            return createCompleteOrderDTO(order, orderItems);
+            // Log each item
+            items.forEach(item ->
+                    log.info("Item: ID={}, Product={}, Quantity={}, Price={}",
+                            item.getId(), item.getProductName(), item.getQuantity(), item.getPrice())
+            );
 
-        } catch (Exception e) {
-            log.error("Error fetching order by number {}: {}", orderNumber, e.getMessage(), e);
-            throw new RuntimeException("Failed to fetch order: " + e.getMessage());
-        }
-    }
+            // Create DTO manually to avoid lazy loading issues
+            OrderDTO dto = new OrderDTO();
+            dto.setId(order.getId());
+            dto.setOrderNumber(order.getOrderNumber());
+            dto.setUserId(order.getUser().getId());
+            dto.setUserName(order.getUser().getFullName());
+            dto.setTotalAmount(order.getTotalAmount());
+            dto.setSubtotal(order.getSubtotal());
+            dto.setTaxAmount(order.getTaxAmount());
+            dto.setShippingAmount(order.getShippingAmount());
+            dto.setDiscountAmount(order.getDiscountAmount());
+            dto.setStatus(order.getStatus());
+            dto.setPaymentMethod(order.getPaymentMethod());
+            dto.setPaymentStatus(order.getPaymentStatus());
+            dto.setNotes(order.getNotes());
+            dto.setCreatedAt(order.getCreatedAt());
+            dto.setUpdatedAt(order.getUpdatedAt());
+            dto.setShippedAt(order.getShippedAt());
+            dto.setDeliveredAt(order.getDeliveredAt());
+            dto.setCancelledAt(order.getCancelledAt());
 
-    @Transactional
-    public OrderDTO updateOrderStatus(Long orderId, Order.OrderStatus newStatus, String trackingNumber) {
-        User currentUser = authService.getCurrentUser();
-        log.info("Updating order status: {} to {} for user: {}", orderId, newStatus, currentUser.getId());
-
-        try {
-            // Check if user is admin (you can implement proper role check)
-            // For now, just log
-            log.info("User role: {}", currentUser.getRole());
-
-            Order order = orderRepository.findById(orderId)
-                    .orElseThrow(() -> new RuntimeException("Order not found"));
-
-            Order.OrderStatus oldStatus = order.getStatus();
-            order.setStatus(newStatus);
-
-            // Handle special status changes
-            if (newStatus == Order.OrderStatus.SHIPPED) {
-                if (trackingNumber != null) {
-                    order.setTrackingNumber(trackingNumber);
-                }
-                order.setShippedAt(LocalDateTime.now());
-
-                // Get order items
-                List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
-                OrderDTO orderDTO = createCompleteOrderDTO(order, orderItems);
-
-                // Send shipped email
-                try {
-                    emailService.sendOrderShippedEmail(orderDTO, trackingNumber != null ? trackingNumber : "Not provided");
-                    log.info("Order shipped email sent for order: {}", order.getOrderNumber());
-                } catch (Exception e) {
-                    log.error("Failed to send order shipped email for order {}: {}",
-                            order.getOrderNumber(), e.getMessage());
-                }
-            }
-            else if (newStatus == Order.OrderStatus.DELIVERED) {
-                order.setDeliveredAt(LocalDateTime.now());
-
-                // Get order items
-                List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
-                OrderDTO orderDTO = createCompleteOrderDTO(order, orderItems);
-
-                // Send delivered email
-                try {
-                    emailService.sendOrderDeliveredEmail(orderDTO);
-                    log.info("Order delivered email sent for order: {}", order.getOrderNumber());
-                } catch (Exception e) {
-                    log.error("Failed to send order delivered email for order {}: {}",
-                            order.getOrderNumber(), e.getMessage());
-                }
+            // Convert addresses
+            if (order.getShippingAddress() != null) {
+                AddressDTO shippingAddr = new AddressDTO();
+                shippingAddr.setStreet(order.getShippingAddress().getStreet());
+                shippingAddr.setCity(order.getShippingAddress().getCity());
+                shippingAddr.setState(order.getShippingAddress().getState());
+                shippingAddr.setZipCode(order.getShippingAddress().getZipCode());
+                shippingAddr.setCountry(order.getShippingAddress().getCountry());
+                shippingAddr.setPhone(order.getShippingAddress().getPhone());
+                shippingAddr.setRecipientName(order.getShippingAddress().getRecipientName());
+                dto.setShippingAddress(shippingAddr);
             }
 
-            order = orderRepository.save(order);
-            log.info("Order {} status updated from {} to {}",
-                    order.getOrderNumber(), oldStatus, newStatus);
+            if (order.getBillingAddress() != null) {
+                AddressDTO billingAddr = new AddressDTO();
+                billingAddr.setStreet(order.getBillingAddress().getStreet());
+                billingAddr.setCity(order.getBillingAddress().getCity());
+                billingAddr.setState(order.getBillingAddress().getState());
+                billingAddr.setZipCode(order.getBillingAddress().getZipCode());
+                billingAddr.setCountry(order.getBillingAddress().getCountry());
+                billingAddr.setPhone(order.getBillingAddress().getPhone());
+                billingAddr.setRecipientName(order.getBillingAddress().getRecipientName());
+                dto.setBillingAddress(billingAddr);
+            }
 
-            // Get updated order items
-            List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
-            return createCompleteOrderDTO(order, orderItems);
+            // Convert order items from our explicitly fetched list
+            List<OrderDTO.OrderItemDTO> itemDTOs = new ArrayList<>();
+            for (OrderItem item : items) {
+                OrderDTO.OrderItemDTO itemDTO = new OrderDTO.OrderItemDTO();
+                itemDTO.setId(item.getId());
+                itemDTO.setProductName(item.getProductName());
+                itemDTO.setSku(item.getProductSku());
+                itemDTO.setQuantity(item.getQuantity());
+                itemDTO.setPrice(item.getPrice());
+                itemDTO.setSubtotal(item.getSubtotal());
+                itemDTO.setProductImage(item.getProductImageUrl());
+
+                // Add product ID if needed
+                if (item.getProduct() != null) {
+                    itemDTO.setProductId(item.getProduct().getId());
+                }
+
+                itemDTOs.add(itemDTO);
+            }
+            dto.setOrderItems(itemDTOs);
+
+            // Calculate derived fields
+            dto.calculateDerivedFields();
+
+            log.info("Returning DTO with {} items", itemDTOs.size());
+            return dto;
 
         } catch (Exception e) {
-            log.error("Error updating order status {}: {}", orderId, e.getMessage(), e);
-            throw new RuntimeException("Failed to update order status: " + e.getMessage());
+            log.error("Error fetching order: {}", e.getMessage(), e);
+            throw new RuntimeException("Error fetching order: " + e.getMessage(), e);
         }
     }
 
@@ -353,51 +368,57 @@ public class OrderService {
         User currentUser = authService.getCurrentUser();
         log.info("Cancelling order: {} for user: {}", orderId, currentUser.getId());
 
-        try {
-            Order order = orderRepository.findById(orderId)
-                    .orElseThrow(() -> new RuntimeException("Order not found"));
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Order not found"));
 
-            // Check if order belongs to current user
-            if (!order.getUser().getId().equals(currentUser.getId())) {
-                throw new RuntimeException("Unauthorized access to order");
-            }
-
-            // Check if order can be cancelled
-            if (!order.canBeCancelled()) {
-                throw new RuntimeException("Order cannot be cancelled at this stage");
-            }
-
-            // Cancel order
-            order.cancelOrder();
-            order = orderRepository.save(order);
-
-            // Restore product stock
-            List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
-            for (OrderItem orderItem : orderItems) {
-                Product product = orderItem.getProduct();
-                if (product != null) {
-                    product.setStockQuantity(product.getStockQuantity() + orderItem.getQuantity());
-                    productRepository.save(product);
-                }
-            }
-
-            log.info("Order cancelled: {}", order.getOrderNumber());
-
-            return createCompleteOrderDTO(order, orderItems);
-
-        } catch (Exception e) {
-            log.error("Error cancelling order {}: {}", orderId, e.getMessage(), e);
-            throw new RuntimeException("Failed to cancel order: " + e.getMessage());
+        // Check if order belongs to current user
+        if (!order.getUser().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("Unauthorized access to order");
         }
+
+        // Check if order can be cancelled
+        if (!order.canBeCancelled()) {
+            throw new RuntimeException("Order cannot be cancelled at this stage");
+        }
+
+        // Cancel order
+        order.cancelOrder();
+        order = orderRepository.save(order);
+
+        // Restore product stock
+        Set<OrderItem> orderItems = order.getOrderItems();
+        for (OrderItem orderItem : orderItems) {
+            Product product = orderItem.getProduct();
+            if (product != null) {
+                product.setStockQuantity(product.getStockQuantity() + orderItem.getQuantity());
+                productRepository.save(product);
+            }
+        }
+
+        log.info("Order cancelled: {}", order.getOrderNumber());
+        return convertToSimpleDTO(order);
     }
 
-    private OrderDTO createCompleteOrderDTO(Order order, List<OrderItem> orderItems) {
+    private String generateOrderNumber() {
+        String orderNumber;
+        do {
+            orderNumber = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        } while (orderRepository.existsByOrderNumber(orderNumber));
+        return orderNumber;
+    }
+
+    private OrderDTO convertToSimpleDTO(Order order) {
+        if (order == null) return null;
+
         OrderDTO dto = new OrderDTO();
         dto.setId(order.getId());
         dto.setOrderNumber(order.getOrderNumber());
-        dto.setUserId(order.getUser().getId());
-        dto.setUserName(order.getUser().getFullName());
-        dto.setUserEmail(order.getUser().getEmail()); // Important for email
+
+        if (order.getUser() != null) {
+            dto.setUserId(order.getUser().getId());
+            dto.setUserName(order.getUser().getFullName());
+        }
+
         dto.setTotalAmount(order.getTotalAmount());
         dto.setSubtotal(order.getSubtotal());
         dto.setTaxAmount(order.getTaxAmount());
@@ -423,7 +444,8 @@ public class OrderService {
             dto.setBillingAddress(convertToAddressDTO(order.getBillingAddress()));
         }
 
-        // Convert order items
+        // Get order items separately to avoid recursion
+        Set<OrderItem> orderItems = order.getOrderItems();
         if (orderItems != null && !orderItems.isEmpty()) {
             List<OrderDTO.OrderItemDTO> itemDTOs = orderItems.stream()
                     .map(item -> {
@@ -446,28 +468,6 @@ public class OrderService {
         return dto;
     }
 
-    private String generateOrderNumber() {
-        String orderNumber;
-        do {
-            orderNumber = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-        } while (orderRepository.existsByOrderNumber(orderNumber));
-        return orderNumber;
-    }
-
-    private Order.Address createAddress(AddressDTO addressDTO) {
-        if (addressDTO == null) return null;
-
-        Order.Address address = new Order.Address();
-        address.setStreet(addressDTO.getStreet());
-        address.setCity(addressDTO.getCity());
-        address.setState(addressDTO.getState());
-        address.setZipCode(addressDTO.getZipCode());
-        address.setCountry(addressDTO.getCountry());
-        address.setPhone(addressDTO.getPhone());
-        address.setRecipientName(addressDTO.getRecipientName());
-        return address;
-    }
-
     private AddressDTO convertToAddressDTO(Order.Address address) {
         if (address == null) return null;
 
@@ -479,6 +479,106 @@ public class OrderService {
         dto.setCountry(address.getCountry());
         dto.setPhone(address.getPhone());
         dto.setRecipientName(address.getRecipientName());
+        return dto;
+    }
+
+    private OrderDTO.OrderItemDTO convertToOrderItemDTO(OrderItem orderItem) {
+        if (orderItem == null) return null;
+
+        OrderDTO.OrderItemDTO itemDTO = new OrderDTO.OrderItemDTO();
+        itemDTO.setId(orderItem.getId());
+        itemDTO.setProductName(orderItem.getProductName());
+        itemDTO.setProductImage(orderItem.getProductImageUrl());
+        itemDTO.setSku(orderItem.getProductSku());
+        itemDTO.setPrice(orderItem.getPrice());
+        itemDTO.setQuantity(orderItem.getQuantity());
+        itemDTO.setSubtotal(orderItem.getSubtotal());
+        return itemDTO;
+    }
+
+    private OrderDTO buildOrderDTO(Order order, List<OrderItem> items) {
+        OrderDTO dto = new OrderDTO();
+
+        // Basic order info
+        dto.setId(order.getId());
+        dto.setOrderNumber(order.getOrderNumber());
+        dto.setUserId(order.getUser().getId());
+        dto.setUserName(order.getUser().getFullName());
+        dto.setUserEmail(order.getUser().getEmail());
+
+        // Amounts
+        dto.setTotalAmount(order.getTotalAmount());
+        dto.setSubtotal(order.getSubtotal());
+        dto.setTaxAmount(order.getTaxAmount());
+        dto.setShippingAmount(order.getShippingAmount());
+        dto.setDiscountAmount(order.getDiscountAmount());
+
+        // Status
+        dto.setStatus(order.getStatus());
+        dto.setPaymentMethod(order.getPaymentMethod());
+        dto.setPaymentStatus(order.getPaymentStatus());
+
+        // Notes and tracking
+        dto.setNotes(order.getNotes());
+        dto.setTrackingNumber(order.getTrackingNumber());
+        dto.setShippingMethod(order.getShippingMethod());
+
+        // Timestamps
+        dto.setCreatedAt(order.getCreatedAt());
+        dto.setUpdatedAt(order.getUpdatedAt());
+        dto.setShippedAt(order.getShippedAt());
+        dto.setDeliveredAt(order.getDeliveredAt());
+        dto.setCancelledAt(order.getCancelledAt());
+
+        // Convert addresses
+        if (order.getShippingAddress() != null) {
+            AddressDTO shippingAddr = new AddressDTO();
+            shippingAddr.setStreet(order.getShippingAddress().getStreet());
+            shippingAddr.setCity(order.getShippingAddress().getCity());
+            shippingAddr.setState(order.getShippingAddress().getState());
+            shippingAddr.setZipCode(order.getShippingAddress().getZipCode());
+            shippingAddr.setCountry(order.getShippingAddress().getCountry());
+            shippingAddr.setPhone(order.getShippingAddress().getPhone());
+            shippingAddr.setRecipientName(order.getShippingAddress().getRecipientName());
+            dto.setShippingAddress(shippingAddr);
+        }
+
+        if (order.getBillingAddress() != null) {
+            AddressDTO billingAddr = new AddressDTO();
+            billingAddr.setStreet(order.getBillingAddress().getStreet());
+            billingAddr.setCity(order.getBillingAddress().getCity());
+            billingAddr.setState(order.getBillingAddress().getState());
+            billingAddr.setZipCode(order.getBillingAddress().getZipCode());
+            billingAddr.setCountry(order.getBillingAddress().getCountry());
+            billingAddr.setPhone(order.getBillingAddress().getPhone());
+            billingAddr.setRecipientName(order.getBillingAddress().getRecipientName());
+            dto.setBillingAddress(billingAddr);
+        }
+
+        // Convert order items
+        List<OrderDTO.OrderItemDTO> itemDTOs = new ArrayList<>();
+        for (OrderItem item : items) {
+            OrderDTO.OrderItemDTO itemDTO = new OrderDTO.OrderItemDTO();
+            itemDTO.setId(item.getId());
+            itemDTO.setProductId(item.getProduct() != null ? item.getProduct().getId() : null);
+            itemDTO.setProductName(item.getProductName());
+            itemDTO.setSku(item.getProductSku());
+            itemDTO.setQuantity(item.getQuantity());
+            itemDTO.setPrice(item.getPrice());
+            itemDTO.setSubtotal(item.getSubtotal());
+            itemDTO.setProductImage(item.getProductImageUrl());
+
+            // Format prices
+            itemDTO.setFormattedPrice(String.format("$%.2f", item.getPrice()));
+            itemDTO.setFormattedSubtotal(String.format("$%.2f", item.getSubtotal()));
+
+            itemDTOs.add(itemDTO);
+        }
+        dto.setOrderItems(itemDTOs);
+
+        // Calculate derived fields
+        dto.calculateDerivedFields();
+
         return dto;
     }
 }

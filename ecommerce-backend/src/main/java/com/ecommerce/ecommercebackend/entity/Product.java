@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -50,16 +51,19 @@ public class Product {
     @JoinColumn(name = "category_id")
     @JsonIgnore
     @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     private Category category;
 
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonIgnore  // ADD THIS - Critical!
     @ToString.Exclude  // ADD THIS
+    @EqualsAndHashCode.Exclude
     private Set<CartItem> cartItems = new HashSet<>();
 
     @OneToMany(mappedBy = "product", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     @JsonIgnore  // ADD THIS - Critical!
     @ToString.Exclude  // ADD THIS
+    @EqualsAndHashCode.Exclude
     private Set<OrderItem> orderItems = new HashSet<>();
 
     private String imageUrl;

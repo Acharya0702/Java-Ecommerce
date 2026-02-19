@@ -22,6 +22,16 @@ import OrderDetailPage from './pages/OrderDetailPage';
 import ProductDetailPage from './pages/ProductDetailPage';
 import PrivateRoute from './components/common/PrivateRoute';
 
+import AdminLayout from './components/admin/AdminLayout';
+import AdminDashboard from './pages/admin/Dashboard';
+import Orders from './pages/admin/Orders';
+import Products from './pages/admin/Products';
+import Categories from './pages/admin/Categories';
+import Users from './pages/admin/Users';
+import Reports from './pages/admin/Reports';
+import Settings from './pages/admin/Settings';
+
+
 function App() {
   return (
       <Provider store={store}>
@@ -60,6 +70,21 @@ function App() {
                     <OrderDetailPage />
                   </PrivateRoute>
                 } />
+
+                {/* Admin Routes */}
+                <Route path="/admin" element={
+                  <PrivateRoute adminOnly>
+                    <AdminLayout />
+                  </PrivateRoute>
+                }>
+                  <Route index element={<AdminDashboard />} />
+                  <Route path="orders" element={<Orders />} />
+                  <Route path="products" element={<Products />} />
+                  <Route path="categories" element={<Categories />} />
+                  <Route path="users" element={<Users />} />
+                  <Route path="reports" element={<Reports />} />
+                  <Route path="settings" element={<Settings />} />
+                </Route>
                 {/* Add more routes as needed */}
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>

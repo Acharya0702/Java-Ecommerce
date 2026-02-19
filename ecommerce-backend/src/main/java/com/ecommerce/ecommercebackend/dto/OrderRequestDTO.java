@@ -1,24 +1,23 @@
 package com.ecommerce.ecommercebackend.dto;
 
+import com.ecommerce.ecommercebackend.entity.Order;
+import lombok.Data;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
-import lombok.Data;
-import com.ecommerce.ecommercebackend.entity.Order;
 
 @Data
 public class OrderRequestDTO {
 
-    @NotNull(message = "Shipping address is required")
     @Valid
+    @NotNull(message = "Shipping address is required")
     private AddressDTO shippingAddress;
 
     @Valid
-    private AddressDTO billingAddress; // Remove @NotNull annotation
+    @NotNull(message = "Billing address is required")
+    private AddressDTO billingAddress;
 
-    private Order.PaymentMethod paymentMethod = Order.PaymentMethod.CASH_ON_DELIVERY;
+    @NotNull(message = "Payment method is required")
+    private Order.PaymentMethod paymentMethod;
 
     private String notes;
-
-    // Add this field to determine if billing address should be same as shipping
-    private Boolean useShippingForBilling = true;
 }

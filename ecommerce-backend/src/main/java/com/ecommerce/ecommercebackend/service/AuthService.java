@@ -3,16 +3,22 @@ package com.ecommerce.ecommercebackend.service;
 import com.ecommerce.ecommercebackend.dto.AuthRequest;
 import com.ecommerce.ecommercebackend.dto.AuthResponse;
 import com.ecommerce.ecommercebackend.dto.RegisterRequest;
+import com.ecommerce.ecommercebackend.entity.Cart;
 import com.ecommerce.ecommercebackend.entity.User;
 import com.ecommerce.ecommercebackend.exception.EmailAlreadyExistsException;
 import com.ecommerce.ecommercebackend.exception.InvalidCredentialsException;
 import com.ecommerce.ecommercebackend.exception.ResourceNotFoundException;
 import com.ecommerce.ecommercebackend.exception.TokenExpiredException;
+import com.ecommerce.ecommercebackend.repository.CartRepository;
 import com.ecommerce.ecommercebackend.repository.UserRepository;
 import com.ecommerce.ecommercebackend.security.CustomUserDetails;
 import com.ecommerce.ecommercebackend.security.JwtService;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -22,6 +28,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -36,6 +43,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
+    private final CartRepository cartRepository;
 
     public AuthResponse register(RegisterRequest request) {
         log.info("Starting registration for email: {}", request.getEmail());
@@ -47,8 +55,7 @@ public class AuthService {
                 throw new EmailAlreadyExistsException("Email already registered");
             }
 
-            log.debug("Creating user object for: {}", request.getEmail());
-            // Create new user
+            // Create new user WITHOUT initializing cart
             User user = new User();
             user.setEmail(request.getEmail());
             user.setPassword(passwordEncoder.encode(request.getPassword()));
@@ -58,34 +65,26 @@ public class AuthService {
             user.setRole(User.Role.CUSTOMER);
             user.setIsActive(true);
             user.setIsEmailVerified(false);
+            user.setEmailVerificationToken(UUID.randomUUID().toString());
 
-            // Generate email verification token
-            String verificationToken = UUID.randomUUID().toString();
-            user.setEmailVerificationToken(verificationToken);
-
-            // Initialize cart for the user
-            user.initializeCart();
-
+            // Save user first (cart will be null)
             log.debug("Saving user to database: {}", request.getEmail());
             User savedUser = userRepository.save(user);
             log.info("User saved with ID: {}", savedUser.getId());
 
+            // NOW create cart for the user (separate transaction)
+            ensureUserHasCart(savedUser);
 
+            // Send verification email
             try {
-                // Send verification email
-                emailService.sendVerificationEmail(user.getEmail(), verificationToken);
-                log.info("Verification email sent to: {}", user.getEmail());
+                emailService.sendVerificationEmail(savedUser.getEmail(), savedUser.getEmailVerificationToken());
+                log.info("Verification email sent to: {}", savedUser.getEmail());
             } catch (Exception e) {
-                log.error("Failed to send verification email to: {}", user.getEmail(), e);
-                // Don't throw exception - user is created successfully, email can be resent later
+                log.error("Failed to send verification email: {}", e.getMessage());
             }
 
-
-            // Convert User to UserDetails
+            // Generate tokens
             UserDetails userDetails = new CustomUserDetails(savedUser);
-
-            // Generate tokens using UserDetails
-            log.debug("Generating JWT tokens for user: {}", savedUser.getEmail());
             String jwtToken = jwtService.generateToken(userDetails);
             String refreshToken = jwtService.generateRefreshToken(userDetails);
 
@@ -98,8 +97,8 @@ public class AuthService {
                     .build();
 
         } catch (Exception e) {
-            log.error("Registration failed for email: {}", request.getEmail(), e);
-            throw e; // Re-throw to see in logs
+            log.error("Registration failed: {}", request.getEmail(), e);
+            throw e;
         }
     }
 
@@ -131,13 +130,15 @@ public class AuthService {
                 throw new InvalidCredentialsException("Account is deactivated. Please contact support");
             }
 
+            // Ensure user has a cart (will create if missing)
+            ensureUserHasCart(user);
+
             // Update last login
             user.setLastLogin(LocalDateTime.now());
             userRepository.save(user);
 
-            // Convert User to UserDetails
+            // Generate tokens
             UserDetails userDetails = new CustomUserDetails(user);
-
             String jwtToken = jwtService.generateToken(userDetails);
             String refreshToken = jwtService.generateRefreshToken(userDetails);
 
@@ -150,7 +151,7 @@ public class AuthService {
                     .build();
 
         } catch (Exception e) {
-            log.error("Authentication failed for email: {}", request.getEmail(), e);
+            log.error("Authentication failed: {}", request.getEmail(), e);
             throw new InvalidCredentialsException("Invalid email or password");
         }
     }
@@ -307,5 +308,77 @@ public class AuthService {
                 .profileImageUrl(user.getProfileImageUrl())
                 .createdAt(user.getCreatedAt())
                 .build();
+    }
+
+
+    /* Initialize admin user when application is fully ready
+     * This runs AFTER all database migrations are complete
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    @Order(1) // Ensures it runs early but after DB is ready
+    @Transactional
+    public void initAdminUserOnStartup() {
+        try {
+            log.info("Checking for admin user existence...");
+
+            if (!userRepository.existsByEmail("admin@ecommerce.com")) {
+                User admin = new User();
+                admin.setEmail("admin@ecommerce.com");
+                admin.setPassword(passwordEncoder.encode("Admin@123"));
+                admin.setFirstName("Admin");
+                admin.setLastName("User");
+                admin.setRole(User.Role.ADMIN);
+                admin.setIsActive(true);
+                admin.setIsEmailVerified(true);
+
+                // Initialize cart for admin
+                admin.initializeCart();
+
+                userRepository.save(admin);
+                log.info("✅ Admin user created successfully");
+            } else {
+                log.info("✅ Admin user already exists");
+            }
+        } catch (Exception e) {
+            log.error("Failed to initialize admin user: {}", e.getMessage());
+        }
+    }
+
+    @Transactional
+    public void ensureUserHasCart(User user) {
+        try {
+            // First check if user already has a cart in database
+            Cart existingCart = cartRepository.findByUserId(user.getId()).orElse(null);
+
+            if (existingCart != null) {
+                // User already has a cart, just ensure the reference is set
+                if (user.getCart() == null) {
+                    user.setCart(existingCart);
+                    userRepository.save(user);
+                    log.info("Linked existing cart {} to user {}", existingCart.getId(), user.getId());
+                }
+                return;
+            }
+
+            // No cart exists, create a new one
+            log.info("Creating new cart for user: {}", user.getId());
+            Cart cart = new Cart();
+            cart.setUser(user);
+            cart.setTotalAmount(BigDecimal.ZERO);
+            cart.setTotalItems(0);
+            cart.setCreatedAt(LocalDateTime.now());
+            cart.setUpdatedAt(LocalDateTime.now());
+
+            Cart savedCart = cartRepository.save(cart);
+            log.info("Cart created with ID: {} for user: {}", savedCart.getId(), user.getId());
+
+            // Update user's cart reference
+            user.setCart(savedCart);
+            userRepository.save(user);
+
+        } catch (Exception e) {
+            log.error("Failed to ensure cart for user {}: {}", user.getId(), e.getMessage(), e);
+            throw new RuntimeException("Failed to create cart for user", e);
+        }
     }
 }

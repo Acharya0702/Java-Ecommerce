@@ -1,9 +1,9 @@
 package com.ecommerce.ecommercebackend.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -15,6 +15,7 @@ import java.util.Set;
 @Entity
 @Table(name = "categories")
 @Data
+@EqualsAndHashCode(exclude = {"parent", "subCategories", "products"})  // ADD THIS LINE
 @EntityListeners(AuditingEntityListener.class)
 public class Category {
 
@@ -33,6 +34,7 @@ public class Category {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "parent_id")
+    @ToString.Exclude
     private Category parent;
 
     @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -40,7 +42,7 @@ public class Category {
     private Set<Category> subCategories = new HashSet<>();
 
     @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JsonIgnore  // CHANGE THIS LINE
+    @JsonIgnore
     @ToString.Exclude
     private Set<Product> products = new HashSet<>();
 

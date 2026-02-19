@@ -11,9 +11,9 @@ public class CartItemDTO {
     private Long productId;
     private String productName;
     private String productImageUrl;
-    private Integer quantity;
-    private BigDecimal price;
-    private BigDecimal subtotal;
+    private Integer quantity=0;
+    private BigDecimal price=BigDecimal.ZERO;
+    private BigDecimal subtotal=BigDecimal.ZERO;
     private LocalDateTime createdAt;
 
     // Helper method
